@@ -160,8 +160,9 @@ void test_radix_sort(void) {
     float    y[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
     float    z[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
     float    mass[4]         = {9.0F, 1.0F, 5.0F, 4.0F};
+    float    fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
 
-    ps_particle_arrs_t arrs = {x, y, z, mass, NULL, NULL, NULL, 4};
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 4};
 
     ps__sort_particles(&ctx->arena, morton_codes, &arrs);
 
@@ -188,11 +189,13 @@ void test_fmm_upward_pass(void) {
     ps_config_t   cfg = {buffer, 1024ULL * 64};
     ps_init(&ctx, &cfg);
 
-    float              x[2]    = {2.0F, -1.0F};
-    float              y[2]    = {3.0F, -2.0F};
-    float              z[2]    = {4.0F, -3.0F};
-    float              mass[2] = {2.0F, 3.0F};
-    ps_particle_arrs_t arrs    = {x, y, z, mass, NULL, NULL, NULL, 2};
+    float x[2]    = {2.0F, -1.0F};
+    float y[2]    = {3.0F, -2.0F};
+    float z[2]    = {4.0F, -3.0F};
+    float mass[2] = {2.0F, 3.0F};
+    float fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
+
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 2};
 
     ps_result_t res = ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
     TEST_ASSERT(res == PS_OK, "Failed to calculate forces");
@@ -222,11 +225,13 @@ void test_fmm_interaction_pass(void) {
     ps_init(&ctx, &cfg);
 
     // place particles at the centers of opposite depth 1 octants
-    float              x[2]    = {-5.0F, 5.0F};
-    float              y[2]    = {-5.0F, 5.0F};
-    float              z[2]    = {-5.0F, 5.0F};
-    float              mass[2] = {1.0F, 1.0F};
-    ps_particle_arrs_t arrs    = {x, y, z, mass, NULL, NULL, NULL, 2};
+    float x[2]    = {-5.0F, 5.0F};
+    float y[2]    = {-5.0F, 5.0F};
+    float z[2]    = {-5.0F, 5.0F};
+    float mass[2] = {1.0F, 1.0F};
+    float fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
+
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 2};
 
     ps_result_t res = ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
     TEST_ASSERT(res == PS_OK, "Failed to calculate forces");
@@ -302,6 +307,40 @@ void test_fmm_downward_pass(void) {
     free(buffer);
 }
 
+void test_fmm_l2p_pass(void) {
+    void* buffer = malloc(1024ULL * 4);
+    TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
+
+    ps_context_t* ctx = NULL;
+    ps_config_t   cfg = {buffer, 1024ULL * 4};
+    ps_init(&ctx, &cfg);
+
+    float x[1] = {0.0F}, y[1] = {0.0F}, z[1] = {0.0F}, mass[1] = {2.5F};
+    float fx[1] = {0.0F}, fy[1] = {0.0F}, fz[1] = {0.0F};
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 1};
+
+    // manually create a leaf node
+    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ps__node_init(ctx->root);
+    ctx->root->is_leaf            = 1;
+    ctx->root->particle_cnt       = 1;
+    ctx->root->first_particle_idx = 0;
+
+    // bg accel field
+    ctx->root->local[1] = 2.0F;
+    ctx->root->local[2] = -1.0F;
+    ctx->root->local[3] = 4.0F;
+
+    ps__fmm_l2p_pass(ctx->root, &arrs);
+
+    // check F = m * a
+    TEST_ASSERT_FLOAT_EQ(5.0F, arrs.fx[0], 1e-6F);  // 2.5 * 2.0
+    TEST_ASSERT_FLOAT_EQ(-2.5F, arrs.fy[0], 1e-6F); // 2.5 * -1.0
+    TEST_ASSERT_FLOAT_EQ(10.0F, arrs.fz[0], 1e-6F); // 2.5 * 4.0
+
+    free(buffer);
+}
+
 int main(void) {
     RUN_TEST(test_morton_encoding);
     RUN_TEST(test_arena_allocator);
@@ -309,6 +348,7 @@ int main(void) {
     RUN_TEST(test_fmm_upward_pass);
     RUN_TEST(test_fmm_interaction_pass);
     RUN_TEST(test_fmm_downward_pass);
+    RUN_TEST(test_fmm_l2p_pass);
 
     return 0;
 }

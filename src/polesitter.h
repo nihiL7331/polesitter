@@ -418,6 +418,37 @@ static void ps__fmm_downward_pass(ps_node_t* node) {
     }
 }
 
+// pass 4
+// l2p, applies the accumulated bg field to the particles inside the leaf
+static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
+    if (!node) {
+        return;
+    }
+
+    if (node->is_leaf) {
+        float field_x = node->local[1];
+        float field_y = node->local[2];
+        float field_z = node->local[3];
+
+        for (uint32_t i = 0; i < node->particle_cnt; ++i) {
+            uint32_t idx  = node->first_particle_idx + i;
+            float    mass = arrs->mass[idx];
+
+            // F = m * a
+            arrs->fx[idx] += mass * field_x;
+            arrs->fy[idx] += mass * field_y;
+            arrs->fz[idx] += mass * field_z;
+        }
+
+        return;
+    }
+
+    // cascade
+    for (int i = 0; i < 8; ++i) {
+        ps__fmm_l2p_pass(node->children[i], arrs);
+    }
+}
+
 #define PS__SWAP_PTR(type, a, b)                                               \
     do {                                                                       \
         type tmp = a;                                                          \
@@ -605,7 +636,10 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     // downward pass (l2l)
     ps__fmm_downward_pass(ctx->root);
 
-    // TODO: passes come here
+    // evaluation pass
+    // l2p
+    ps__fmm_l2p_pass(ctx->root, arrs);
+    // TODO: p2p
 
     return PS_OK;
 }
