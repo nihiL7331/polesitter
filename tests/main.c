@@ -5,12 +5,12 @@
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
-#define RUN_TEST(test_func)                                                    \
-    do {                                                                       \
-        printf("[ ] %s...\n", #test_func);                                     \
-        fflush(stdout);                                                        \
-        test_func();                                                           \
-        printf("\r[X] %s - PASSED\n", #test_func);                             \
+#define RUN_TEST(test_func)                                                                        \
+    do {                                                                                           \
+        printf("[ ] %s...\n", #test_func);                                                         \
+        fflush(stdout);                                                                            \
+        test_func();                                                                               \
+        printf("\r[X] %s - PASSED\n", #test_func);                                                 \
     } while (0)
 
 void test_morton_encoding(void) {

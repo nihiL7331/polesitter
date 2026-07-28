@@ -2,9 +2,9 @@
 #define POLESITTER_H
 
 #ifndef POLESITTER_MALLOC
-#include <stdlib.h>
-#define POLESITTER_MALLOC(sz) malloc(sz)
-#define POLESITTER_FREE(ptr) free(ptr)
+#    include <stdlib.h>
+#    define POLESITTER_MALLOC(sz) malloc(sz)
+#    define POLESITTER_FREE(ptr)  free(ptr)
 #endif
 
 #endif
