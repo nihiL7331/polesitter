@@ -160,8 +160,9 @@ void test_radix_sort(void) {
     float    y[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
     float    z[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
     float    mass[4]         = {9.0F, 1.0F, 5.0F, 4.0F};
+    float    fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
 
-    ps_particle_arrs_t arrs = {x, y, z, mass, NULL, NULL, NULL, 4};
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 4};
 
     ps__sort_particles(&ctx->arena, morton_codes, &arrs);
 
@@ -188,11 +189,13 @@ void test_fmm_upward_pass(void) {
     ps_config_t   cfg = {buffer, 1024ULL * 64};
     ps_init(&ctx, &cfg);
 
-    float              x[2]    = {2.0F, -1.0F};
-    float              y[2]    = {3.0F, -2.0F};
-    float              z[2]    = {4.0F, -3.0F};
-    float              mass[2] = {2.0F, 3.0F};
-    ps_particle_arrs_t arrs    = {x, y, z, mass, NULL, NULL, NULL, 2};
+    float x[2]    = {2.0F, -1.0F};
+    float y[2]    = {3.0F, -2.0F};
+    float z[2]    = {4.0F, -3.0F};
+    float mass[2] = {2.0F, 3.0F};
+    float fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
+
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 2};
 
     ps_result_t res = ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
     TEST_ASSERT(res == PS_OK, "Failed to calculate forces");
@@ -222,11 +225,13 @@ void test_fmm_interaction_pass(void) {
     ps_init(&ctx, &cfg);
 
     // place particles at the centers of opposite depth 1 octants
-    float              x[2]    = {-5.0F, 5.0F};
-    float              y[2]    = {-5.0F, 5.0F};
-    float              z[2]    = {-5.0F, 5.0F};
-    float              mass[2] = {1.0F, 1.0F};
-    ps_particle_arrs_t arrs    = {x, y, z, mass, NULL, NULL, NULL, 2};
+    float x[2]    = {-5.0F, 5.0F};
+    float y[2]    = {-5.0F, 5.0F};
+    float z[2]    = {-5.0F, 5.0F};
+    float mass[2] = {1.0F, 1.0F};
+    float fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
+
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 2};
 
     ps_result_t res = ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
     TEST_ASSERT(res == PS_OK, "Failed to calculate forces");
