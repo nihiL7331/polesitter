@@ -1,6 +1,8 @@
 #ifndef POLESITTER_H
 #define POLESITTER_H
 
+#include <stdint.h>
+
 #ifndef POLESITTER_MALLOC
 #    include <stdlib.h>
 #    define POLESITTER_MALLOC(sz) malloc(sz)
@@ -8,6 +10,26 @@
 #endif
 
 #endif
+// =====================================================================
+// arena allocator
+// =====================================================================
+
+typedef struct {
+    uint8_t* mem;
+    size_t   cap;
+    size_t   off;
+} ps_arena_t;
+
+// init arena with pre-allocated/externally provided buffer
+static void ps_arena_init(ps_arena_t* arena, void* buffer, size_t cap);
+
+// alloc raw bytes with a specified align (16 for SIMD)
+static void* ps_arena_alloc(ps_arena_t* arena, size_t size, size_t align);
+
+// clear for next frame
+static void ps_arena_clear(ps_arena_t* arena);
+
+#endif // POLESITTER_H
 
 #ifdef POLESITTER_IMPLEMENTATION
 

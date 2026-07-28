@@ -46,8 +46,49 @@ void test_morton_encoding(void) {
                 "Morton code for x=3 failed");
 }
 
+void test_arena_allocator(void) {
+    uint8_t    buffer[64];
+    ps_arena_t arena;
+    ps_arena_init(&arena, buffer, sizeof(buffer));
+
+    TEST_ASSERT(arena.cap == 64 && "Arena capacity mismatch");
+    TEST_ASSERT(arena.off == 0 && "Arena offset should start at 0");
+
+    // basic alloc with SIMD align
+    void* ptr1 = ps_arena_alloc(&arena, 10, 16);
+    TEST_ASSERT(ptr1 != NULL && "1st allocation failed");
+    TEST_ASSERT((uintptr_t)ptr1 % 16 == 0 &&
+                "1st allocation not aligned to 16B");
+
+    // padding test
+    void* ptr2 = ps_arena_alloc(&arena, 10, 16);
+    TEST_ASSERT(ptr2 != NULL && "2nd allocation failed");
+    TEST_ASSERT((uintptr_t)ptr2 % 16 == 0 &&
+                "2nd allocation not aligned to 16B");
+
+    // ptr2 should be 16B after ptr1
+    TEST_ASSERT((uintptr_t)ptr2 == (uintptr_t)ptr1 + 16 &&
+                "2nd allocation not 16B after 1st allocation");
+
+    // oom test
+    void* ptr3 = ps_arena_alloc(&arena, 64, 16);
+    TEST_ASSERT(ptr3 == NULL && "3rd allocation should have failed due to OOM");
+
+    // clear test
+    ps_arena_clear(&arena);
+    TEST_ASSERT(arena.off == 0 && "Arena offset should be reset to 0");
+
+    // reusability test
+    void* ptr4 = ps_arena_alloc(&arena, 32, 16);
+    TEST_ASSERT(ptr4 != NULL && "4th allocation failed after clear");
+    TEST_ASSERT(
+        ptr4 == ptr1 &&
+        "4th allocation should reuse the same memory as 1st allocation");
+}
+
 int main(void) {
     RUN_TEST(test_morton_encoding);
+    RUN_TEST(test_arena_allocator);
 
     return 0;
 }
