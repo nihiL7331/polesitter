@@ -33,7 +33,7 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf);
 // =====================================================================
 
 // ---------------------------------------------------------------------
-// arena allocator
+// internal structs
 // ---------------------------------------------------------------------
 
 typedef struct {
@@ -42,9 +42,32 @@ typedef struct {
     size_t   off;
 } ps_arena_t;
 
+// octree node
+typedef struct ps_node {
+    // physics, 16B
+    float com_x;
+    float com_y;
+    float com_z;
+    float mass;
+
+    // structure, 64B
+    struct ps_node* children[8];
+
+    // leaf metadata, 16B
+    uint32_t is_leaf;
+    uint32_t particle_cnt;
+    uint32_t first_particle_idx;
+    uint32_t _pad;
+} ps_node_t;
+
 struct ps_context {
     ps_arena_t arena;
+    ps_node_t* root;
 };
+
+// ---------------------------------------------------------------------
+// internal functions
+// ---------------------------------------------------------------------
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
 static uint32_t ps__expand_bits(uint32_t v) {
@@ -106,6 +129,60 @@ static void* ps_arena_alloc(ps_arena_t* arena, size_t size, size_t align) {
 // clear for next frame
 static void ps_arena_clear(ps_arena_t* arena) {
     arena->off = 0;
+}
+
+#define PS_MAX_DEPTH                                                           \
+    10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
+
+// zero out a newly allocated node
+static void ps__node_init(ps_node_t* node) {
+    node->com_x = 0.0f;
+    node->com_y = 0.0f;
+    node->com_z = 0.0f;
+    node->mass  = 0.0f;
+
+    for (int i = 0; i < 8; ++i)
+        node->children[i] = NULL;
+
+    node->is_leaf            = 0;
+    node->particle_cnt       = 0;
+    node->first_particle_idx = 0;
+}
+
+// walk the morton code and build the tree branches
+static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
+                                   uint32_t morton_code,
+                                   uint32_t particle_idx) {
+    if (!root)
+        return PS_EINVAL;
+
+    ps_node_t* curr = root;
+    for (int depth = 0; depth < PS_MAX_DEPTH; ++depth) {
+        // shift starts at 27, decreases by 3 each lvl
+        int      shift  = 27 - (depth * 3);
+        uint32_t octant = (morton_code >> shift) & 0x7; // 3 bits for octant
+
+        if (!curr->children[octant]) {
+            ps_node_t* new_node =
+                (ps_node_t*)ps_arena_alloc(arena, sizeof(ps_node_t), 16);
+            if (!new_node)
+                return PS_EOOM;
+
+            ps__node_init(new_node);
+            curr->children[octant] = new_node;
+        }
+
+        curr = curr->children[octant];
+    }
+
+    curr->is_leaf = 1;
+
+    if (curr->particle_cnt == 0)
+        curr->first_particle_idx = particle_idx;
+
+    curr->particle_cnt++;
+
+    return PS_OK;
 }
 
 // =====================================================================
