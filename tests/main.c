@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,9 @@ static void ps_assert(int cond, const char* expr_str, const char* msg,
 
 #define TEST_ASSERT(expr, msg)                                                 \
     ps_assert(!!(expr), #expr, msg, __FILE__, __LINE__)
+
+#define TEST_ASSERT_FLOAT_EQ(expected, actual, eps)                            \
+    TEST_ASSERT(fabsf((expected) - (actual)) < (eps), "Float mismatch")
 
 #define RUN_TEST(test_func)                                                    \
     do {                                                                       \
@@ -133,6 +137,35 @@ void test_octree_insertion(void) {
     TEST_ASSERT(curr->particle_cnt == 1, "Leaf particle count is wrong");
     TEST_ASSERT(curr->first_particle_idx == 99,
                 "Leaf stored wrong particle idx");
+}
+
+void test_radix_sort(void) {
+    uint8_t       buffer[4096];
+    ps_context_t* ctx = NULL;
+    ps_config_t   cfg = {buffer, sizeof(buffer)};
+    ps_init(&ctx, &cfg);
+
+    uint32_t morton_codes[4] = {999, 10, 500, 42};
+    float    x[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
+    float    y[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
+    float    z[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
+    float    mass[4]         = {9.0F, 1.0F, 5.0F, 4.0F};
+
+    ps_particle_arrs_t arrs = {x, y, z, mass, NULL, NULL, NULL, 4};
+
+    ps__sort_particles(&ctx->arena, morton_codes, &arrs);
+
+    // verify morton codes are strictly ascending
+    TEST_ASSERT(morton_codes[0] == 10, "Sort failed at idx 0");
+    TEST_ASSERT(morton_codes[1] == 42, "Sort failed at idx 1");
+    TEST_ASSERT(morton_codes[2] == 500, "Sort failed at idx 2");
+    TEST_ASSERT(morton_codes[3] == 999, "Sort failed at idx 3");
+
+    // mass should match the morton code
+    TEST_ASSERT_FLOAT_EQ(1.0F, arrs.mass[0], 1e-6F);
+    TEST_ASSERT_FLOAT_EQ(4.0F, arrs.mass[1], 1e-6F);
+    TEST_ASSERT_FLOAT_EQ(5.0F, arrs.mass[2], 1e-6F);
+    TEST_ASSERT_FLOAT_EQ(9.0F, arrs.mass[3], 1e-6F);
 }
 
 int main(void) {
