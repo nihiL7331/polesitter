@@ -180,7 +180,8 @@ void test_fmm_upward_pass(void) {
     float              mass[2] = {2.0F, 3.0F};
     ps_particle_arrs_t arrs    = {x, y, z, mass, NULL, NULL, NULL, 2};
 
-    ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
+    ps_result_t res = ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
+    TEST_ASSERT(res == PS_OK, "Failed to calculate forces");
 
     // M0 = sum(mass) = 2.0 + 3.0 = 5.0
     // MX = sum(mass * (x - root_x)) = 2.0*2.0 + 3.0*-1.0 = 1.0
