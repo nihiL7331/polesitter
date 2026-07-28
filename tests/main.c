@@ -168,10 +168,39 @@ void test_radix_sort(void) {
     TEST_ASSERT_FLOAT_EQ(9.0F, arrs.mass[3], 1e-6F);
 }
 
+void test_fmm_upward_pass(void) {
+    uint8_t       buffer[1024 * 64];
+    ps_context_t* ctx = NULL;
+    ps_config_t   cfg = {buffer, sizeof(buffer)};
+    ps_init(&ctx, &cfg);
+
+    float              x[2]    = {2.0F, -1.0F};
+    float              y[2]    = {3.0F, -2.0F};
+    float              z[2]    = {4.0F, -3.0F};
+    float              mass[2] = {2.0F, 3.0F};
+    ps_particle_arrs_t arrs    = {x, y, z, mass, NULL, NULL, NULL, 2};
+
+    ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
+
+    // M0 = sum(mass) = 2.0 + 3.0 = 5.0
+    // MX = sum(mass * (x - root_x)) = 2.0*2.0 + 3.0*-1.0 = 1.0
+    // MY = sum(mass * (y - root_y)) = 2.0*3.0 + 3.0*-2.0 = 0.0
+    // MZ = sum(mass * (z - root_z)) = 2.0*4.0 + 3.0*-3.0 = -1.0
+
+    ps_node_t* root = ctx->root;
+    TEST_ASSERT(root != NULL, "Root is null");
+
+    TEST_ASSERT_FLOAT_EQ(5.0F, root->multipole[0], 1e-4F);  // M0
+    TEST_ASSERT_FLOAT_EQ(1.0F, root->multipole[1], 1e-4F);  // MX
+    TEST_ASSERT_FLOAT_EQ(0.0F, root->multipole[2], 1e-4F);  // MY
+    TEST_ASSERT_FLOAT_EQ(-1.0F, root->multipole[3], 1e-4F); // MZ
+}
+
 int main(void) {
     RUN_TEST(test_morton_encoding);
     RUN_TEST(test_arena_allocator);
     RUN_TEST(test_octree_insertion);
+    RUN_TEST(test_fmm_upward_pass);
 
     return 0;
 }
