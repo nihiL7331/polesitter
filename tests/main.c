@@ -341,6 +341,53 @@ void test_fmm_l2p_pass(void) {
     free(buffer);
 }
 
+void test_fmm_p2p_pass(void) {
+    void* buffer = malloc(1024ULL * 4);
+    TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
+
+    ps_context_t* ctx = NULL;
+    ps_config_t   cfg = {buffer, 1024ULL * 4};
+    ps_init(&ctx, &cfg);
+
+    // 2 particles offset by 1.0 unit on the x axis
+    float x[2]    = {0.0F, 1.0F};
+    float y[2]    = {0.0F, 0.0F};
+    float z[2]    = {0.0F, 0.0F};
+    float mass[2] = {2.0F, 3.0F};
+    float fx[2]   = {0.0F, 0.0F};
+    float fy[2]   = {0.0F, 0.0F};
+    float fz[2]   = {0.0F, 0.0F};
+
+    const ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 2};
+
+    // manually create a leaf node containing both
+    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ps__node_init(ctx->root);
+    ctx->root->is_leaf            = 1;
+    ctx->root->particle_cnt       = 2;
+    ctx->root->first_particle_idx = 0;
+    ctx->root->half_width         = 10.0F; // not well-separated
+
+    ps__fmm_p2p_pass(ctx->root, ctx->root, &arrs);
+
+    // dist = 1.0
+    // dist_sq = 1.0^2 + 1e-4 = 1.0001
+    // F_mag = (mass1 * mass2) / (dist_sq^1.5)
+    float expected_f = (2.0F * 3.0F) * powf(1.0001F, -1.5F);
+
+    // 0 should be pulled towards 1 (+X dir)
+    TEST_ASSERT_FLOAT_EQ(expected_f, arrs.fx[0], 1e-4F);
+    TEST_ASSERT_FLOAT_EQ(0.0F, arrs.fy[0], 1e-6F);
+    TEST_ASSERT_FLOAT_EQ(0.0F, arrs.fz[0], 1e-6F);
+
+    // 1 should be pulled towards 0 (-X dir)
+    TEST_ASSERT_FLOAT_EQ(-expected_f, arrs.fx[1], 1e-4F);
+    TEST_ASSERT_FLOAT_EQ(0.0F, arrs.fy[1], 1e-6F);
+    TEST_ASSERT_FLOAT_EQ(0.0F, arrs.fz[1], 1e-6F);
+
+    free(buffer);
+}
+
 int main(void) {
     RUN_TEST(test_morton_encoding);
     RUN_TEST(test_arena_allocator);
@@ -349,6 +396,7 @@ int main(void) {
     RUN_TEST(test_fmm_interaction_pass);
     RUN_TEST(test_fmm_downward_pass);
     RUN_TEST(test_fmm_l2p_pass);
+    RUN_TEST(test_fmm_p2p_pass);
 
     return 0;
 }
