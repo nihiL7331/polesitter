@@ -23,11 +23,16 @@ static uint32_t ps__expand_bits(uint32_t v) {
     return v;
 }
 
+// final number has 32 bits.
+// diving it by 3 dimensions, we can store 10 bits per dimension.
+// it interleaves the expanded bits of x, y and z.
 static uint32_t ps__morton_encode(uint32_t x, uint32_t y, uint32_t z) {
-    (void)x;
-    (void)y;
-    (void)z;
-    return 0;
+    uint32_t xx = ps__expand_bits(x);
+    uint32_t yy = ps__expand_bits(y);
+    uint32_t zz = ps__expand_bits(z);
+
+    // x takes bit 0, y shifts to bit 1, z shifts to bit 2
+    return xx | (yy << 1) | (zz << 2);
 }
 
 #endif // POLESITTER_IMPLEMENTATION
