@@ -403,6 +403,7 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
 
     // place ctx at beginning of buffer
     ps_context_t* ctx = (ps_context_t*)conf->buff;
+    ctx->root         = NULL;
 
     // arena takes the rest
     size_t arena_start = ps_align_forward(sizeof(ps_context_t), 16);
