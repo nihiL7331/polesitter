@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  lint:
+    name: clang-format/clang-tidy
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+
+      - name: deps
+        run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy
+
+      - name: clang-format
+        run: clang-format --dry-run --Werror src/polesitter.h tests/*.c
+
+      - name: cmake
+        run: cmake -B build -S .
+
+      - name: clang-tidy
+        run: clang-tidy tests/main.c -p build --warnings-as-errors=*
+
+  test:
+    needs: lint
+    name: build/test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+
+      - name: cmake
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+      - name: build
+        run: cmake --build build --config Release
+
+      - name: run
+        run: ctest --test-dir build --build-config Release --output-on-failure
