@@ -17,7 +17,11 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
 
     add_executable(polesitter_tests tests/main.c)
 
-    target_link_libraries(polesitter_tests PRIVATE polesitter m)
+    target_link_libraries(polesitter_tests PRIVATE polesitter)
+
+    if(NOT MSVC)
+        target_link_libraries(polesitter_tests PRIVATE m)
+    endif()
 
     if(MSVC)
         target_compile_options(polesitter_tests PRIVATE
