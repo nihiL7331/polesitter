@@ -21,6 +21,17 @@ typedef struct {
     size_t buff_size; // total size in B
 } ps_config_t;
 
+typedef struct {
+    float* x;
+    float* y;
+    float* z;
+    float* mass;
+    float* fx;
+    float* fy;
+    float* fz;
+    size_t cnt;
+} ps_particle_arrs_t;
+
 // init pipeline with a pre-allocated buffer.
 ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf);
 
