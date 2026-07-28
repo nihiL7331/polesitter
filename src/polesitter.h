@@ -35,6 +35,11 @@ typedef struct {
 // init pipeline with a pre-allocated buffer.
 ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf);
 
+// compute forces on particles using FMM
+ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
+                           float root_cx, float root_cy, float root_cz,
+                           float root_hw);
+
 #endif // POLESITTER_H
 
 #define POLESITTER_IMPLEMENTATION
@@ -329,6 +334,85 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
                   conf->buff_size - arena_start);
 
     *out_ctx = ctx;
+    return PS_OK;
+}
+
+ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
+                           float root_cx, float root_cy, float root_cz,
+                           float root_hw) {
+    if (!ctx || !arrs) {
+        return PS_EINVAL;
+    }
+
+    // clear arena for new frame
+    ps_arena_clear(&ctx->arena);
+
+    // borrow scratch memory from arena for morton codes
+    uint32_t* morton_codes = (uint32_t*)ps_arena_alloc(
+        &ctx->arena, arrs->cnt * sizeof(uint32_t), 16);
+    if (!morton_codes) {
+        return PS_EOOM;
+    }
+
+    // precalculate morton codes
+    for (size_t i = 0; i < arrs->cnt; ++i) {
+        // normalize particle position to [0, 1] based on root node
+        float nx = (arrs->x[i] - (root_cx - root_hw)) / (2.0F * root_hw);
+        float ny = (arrs->y[i] - (root_cy - root_hw)) / (2.0F * root_hw);
+        float nz = (arrs->z[i] - (root_cz - root_hw)) / (2.0F * root_hw);
+
+        // clamp to [0, 1]
+        if (nx < 0.0F) {
+            nx = 0.0F;
+        }
+        if (ny < 0.0F) {
+            ny = 0.0F;
+        }
+        if (nz < 0.0F) {
+            nz = 0.0F;
+        }
+        if (nx > 1.0F) {
+            nx = 1.0F;
+        }
+        if (ny > 1.0F) {
+            ny = 1.0F;
+        }
+        if (nz > 1.0F) {
+            nz = 1.0F;
+        }
+
+        // scale to [0, 1023] for morton encoding
+        uint32_t ix = (uint32_t)(nx * 1023.0F);
+        uint32_t iy = (uint32_t)(ny * 1023.0F);
+        uint32_t iz = (uint32_t)(nz * 1023.0F);
+
+        morton_codes[i] = ps__morton_encode(ix, iy, iz);
+    }
+
+    // sort the arrays based on morton_codes as keys
+    ps__sort_particles(&ctx->arena, morton_codes, arrs);
+
+    // allocate the root node
+    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    if (!ctx->root) {
+        return PS_EOOM;
+    }
+
+    ps__node_init(ctx->root);
+
+    // seed geometry
+    ctx->root->x          = root_cx;
+    ctx->root->y          = root_cy;
+    ctx->root->z          = root_cz;
+    ctx->root->half_width = root_hw;
+
+    // build the octree
+    for (size_t i = 0; i < arrs->cnt; ++i) {
+        ps__tree_insert(&ctx->arena, ctx->root, morton_codes[i], i);
+    }
+
+    // TODO: passes come here
+
     return PS_OK;
 }
 
