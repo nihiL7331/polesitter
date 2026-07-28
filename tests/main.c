@@ -55,9 +55,11 @@ void test_morton_encoding(void) {
 }
 
 void test_arena_allocator(void) {
-    uint8_t    buffer[64];
+    void* buffer = malloc(64);
+    TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
+
     ps_arena_t arena;
-    ps_arena_init(&arena, buffer, sizeof(buffer));
+    ps_arena_init(&arena, buffer, 64);
 
     TEST_ASSERT(arena.cap == 64, "Arena capacity mismatch");
     TEST_ASSERT(arena.off == 0, "Arena offset should start at 0");
@@ -90,12 +92,16 @@ void test_arena_allocator(void) {
     TEST_ASSERT(
         ptr4 == ptr1,
         "4th allocation should reuse the same memory as 1st allocation");
+
+    free(buffer);
 }
 
 void test_octree_insertion(void) {
-    uint8_t       buffer[4096];
+    void* buffer = malloc(1024ULL * 4);
+    TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
+
     ps_context_t* ctx    = NULL;
-    ps_config_t   config = {buffer, sizeof(buffer)};
+    ps_config_t   config = {buffer, 1024ULL * 4};
 
     ps_result_t res = ps_init(&ctx, &config);
     TEST_ASSERT(res == PS_OK, "Failed to initialize context");
@@ -137,12 +143,16 @@ void test_octree_insertion(void) {
     TEST_ASSERT(curr->particle_cnt == 1, "Leaf particle count is wrong");
     TEST_ASSERT(curr->first_particle_idx == 99,
                 "Leaf stored wrong particle idx");
+
+    free(buffer);
 }
 
 void test_radix_sort(void) {
-    uint8_t       buffer[4096];
+    void* buffer = malloc(1024ULL * 4);
+    TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
+
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, sizeof(buffer)};
+    ps_config_t   cfg = {buffer, 1024ULL * 4};
     ps_init(&ctx, &cfg);
 
     uint32_t morton_codes[4] = {999, 10, 500, 42};
@@ -166,12 +176,16 @@ void test_radix_sort(void) {
     TEST_ASSERT_FLOAT_EQ(4.0F, arrs.mass[1], 1e-6F);
     TEST_ASSERT_FLOAT_EQ(5.0F, arrs.mass[2], 1e-6F);
     TEST_ASSERT_FLOAT_EQ(9.0F, arrs.mass[3], 1e-6F);
+
+    free(buffer);
 }
 
 void test_fmm_upward_pass(void) {
-    uint8_t       buffer[1024 * 64];
+    void* buffer = malloc(1024ULL * 64);
+    TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
+
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, sizeof(buffer)};
+    ps_config_t   cfg = {buffer, 1024ULL * 64};
     ps_init(&ctx, &cfg);
 
     float              x[2]    = {2.0F, -1.0F};
@@ -195,6 +209,8 @@ void test_fmm_upward_pass(void) {
     TEST_ASSERT_FLOAT_EQ(1.0F, root->multipole[1], 1e-4F);  // MX
     TEST_ASSERT_FLOAT_EQ(0.0F, root->multipole[2], 1e-4F);  // MY
     TEST_ASSERT_FLOAT_EQ(-1.0F, root->multipole[3], 1e-4F); // MZ
+
+    free(buffer);
 }
 
 int main(void) {
