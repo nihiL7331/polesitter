@@ -408,7 +408,7 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
 
     // build the octree
     for (size_t i = 0; i < arrs->cnt; ++i) {
-        ps__tree_insert(&ctx->arena, ctx->root, morton_codes[i], i);
+        ps__tree_insert(&ctx->arena, ctx->root, morton_codes[i], (uint32_t)i);
     }
 
     // TODO: passes come here
