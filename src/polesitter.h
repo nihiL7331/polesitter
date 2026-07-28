@@ -1,6 +1,7 @@
 #ifndef POLESITTER_H
 #define POLESITTER_H
 
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -234,6 +235,7 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
     return PS_OK;
 }
 
+// pass 1
 // p2m (leaves) and m2m (parents) in post-order traversal
 static void ps__fmm_upward_pass(ps_node_t*                node,
                                 const ps_particle_arrs_t* arrs) {
@@ -308,6 +310,90 @@ static void ps__fmm_upward_pass(ps_node_t*                node,
     node->multipole[1] = p_mx;
     node->multipole[2] = p_my;
     node->multipole[3] = p_mz;
+}
+
+// pass 2
+// m2l dual-tree traversal to find well-separated nodes and translate expansions
+static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
+    if (!target || !src) {
+        return;
+    }
+
+    float dx      = src->x - target->x;
+    float dy      = src->y - target->y;
+    float dz      = src->z - target->z;
+    float dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
+
+    // multipole acceptance criterion
+    // if dist > sum of half-widths, they are well-separated
+    // theta dictates accuracy vs speed
+    float theta  = 1.0F;
+    float hw_sum = target->half_width + src->half_width;
+
+    // well-separated
+    if (dist_sq > (theta * theta) * (hw_sum * hw_sum)) {
+        float dist   = sqrtf(dist_sq);
+        float inv_r3 = 1.0F / (dist * dist_sq);
+        float inv_r5 = inv_r3 / dist_sq;
+
+        float m0 = src->multipole[0];
+        float mx = src->multipole[1];
+        float my = src->multipole[2];
+        float mz = src->multipole[3];
+
+        // monopole contribution to target's local field
+        float force_m0_x = m0 * dx * inv_r3;
+        float force_m0_y = m0 * dy * inv_r3;
+        float force_m0_z = m0 * dz * inv_r3;
+
+        // dipole contribution to target's local field
+        float m_dot_r      = (mx * dx) + (my * dy) + (mz * dz);
+        float dipole_coeff = 3.0F * m_dot_r * inv_r5;
+
+        float force_dip_x = (dx * dipole_coeff) - (mx * inv_r3);
+        float force_dip_y = (dy * dipole_coeff) - (my * inv_r3);
+        float force_dip_z = (dz * dipole_coeff) - (mz * inv_r3);
+
+        // accumulate into target's local expansion
+        target->local[1] += force_m0_x + force_dip_x;
+        target->local[2] += force_m0_y + force_dip_y;
+        target->local[3] += force_m0_z + force_dip_z;
+
+        return;
+    }
+
+    // not well-separated
+    if (target->is_leaf && src->is_leaf) {
+        // both are leaves, near-field p2p pass will handle exact dists
+        return;
+    }
+
+    if (target->is_leaf) {
+        // target is as small as possible, open the src
+        for (int i = 0; i < 8; ++i) {
+            ps__fmm_interaction_pass(target, src->children[i]);
+        }
+    } else if (src->is_leaf) {
+        // src is as small as possible, open the target
+        for (int i = 0; i < 8; ++i) {
+            ps__fmm_interaction_pass(target->children[i], src);
+        }
+    } else {
+        // subdivide both and pair all 64 permutations
+        for (int i = 0; i < 8; ++i) {
+            if (!target->children[i]) {
+                continue;
+            }
+
+            for (int j = 0; j < 8; ++j) {
+                if (!src->children[j]) {
+                    continue;
+                }
+
+                ps__fmm_interaction_pass(target->children[i], src->children[j]);
+            }
+        }
+    }
 }
 
 #define PS__SWAP_PTR(type, a, b)                                               \
@@ -490,6 +576,9 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
 
     // upward pass (p2m -> m2m)
     ps__fmm_upward_pass(ctx->root, arrs);
+
+    // interaction pass (m2l)
+    ps__fmm_interaction_pass(ctx->root, ctx->root);
 
     // TODO: passes come here
 
