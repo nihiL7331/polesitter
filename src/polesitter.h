@@ -449,6 +449,104 @@ static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
     }
 }
 
+// pass 5
+// p2p, dual-tree traversal to calc N-body forces for near-field neighbors
+static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
+                             const ps_particle_arrs_t* arrs) {
+    if (!target || !src) {
+        return;
+    }
+
+    float dx      = src->x - target->x;
+    float dy      = src->y - target->y;
+    float dz      = src->z - target->z;
+    float dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
+
+    float theta  = 1.0F;
+    float hw_sum = target->half_width + src->half_width;
+
+    // if well-separated M2L already handled it
+    if (dist_sq > (theta * theta) * (hw_sum * hw_sum)) {
+        return;
+    }
+
+    // if both are leaves and too close
+    // do direct N-body force
+    if (target->is_leaf && src->is_leaf) {
+        for (uint32_t i = 0; i < target->particle_cnt; ++i) {
+            uint32_t t_idx  = target->first_particle_idx + i;
+            float    t_x    = arrs->x[t_idx];
+            float    t_y    = arrs->y[t_idx];
+            float    t_z    = arrs->z[t_idx];
+            float    t_mass = arrs->mass[t_idx];
+
+            float f_x = 0.0F;
+            float f_y = 0.0F;
+            float f_z = 0.0F;
+
+            for (uint32_t j = 0; j < src->particle_cnt; ++j) {
+                uint32_t s_idx = src->first_particle_idx + j;
+
+                // skip self
+                if (t_idx == s_idx) {
+                    continue;
+                }
+
+                float p_dx = arrs->x[s_idx] - t_x;
+                float p_dy = arrs->y[s_idx] - t_y;
+                float p_dz = arrs->z[s_idx] - t_z;
+
+                // add negligible value to prevent div by 0
+                float p_dist_sq =
+                    (p_dx * p_dx) + (p_dy * p_dy) + (p_dz * p_dz) + 1e-4F;
+
+                float inv_dist  = 1.0F / sqrtf(p_dist_sq);
+                float inv_dist3 = inv_dist * inv_dist * inv_dist;
+
+                float s_mass = arrs->mass[s_idx];
+
+                // gravity force magnitude
+                float force = s_mass * inv_dist3;
+
+                f_x += p_dx * force;
+                f_y += p_dy * force;
+                f_z += p_dz * force;
+            }
+
+            arrs->fx[t_idx] += t_mass * f_x;
+            arrs->fy[t_idx] += t_mass * f_y;
+            arrs->fz[t_idx] += t_mass * f_z;
+        }
+
+        return;
+    }
+
+    // otherwise subdivide and recurse (like in m2l)
+    if (target->is_leaf) {
+        for (int i = 0; i < 8; ++i) {
+            ps__fmm_p2p_pass(target, src->children[i], arrs);
+        }
+    } else if (src->is_leaf) {
+        for (int i = 0; i < 8; ++i) {
+            ps__fmm_p2p_pass(target->children[i], src, arrs);
+        }
+    } else {
+        for (int i = 0; i < 8; ++i) {
+            if (!target->children[i]) {
+                continue;
+            }
+
+            for (int j = 0; j < 8; ++j) {
+                if (!src->children[j]) {
+                    continue;
+                }
+
+                ps__fmm_p2p_pass(target->children[i], src->children[j], arrs);
+            }
+        }
+    }
+}
+
 #define PS__SWAP_PTR(type, a, b)                                               \
     do {                                                                       \
         type tmp = a;                                                          \
@@ -625,6 +723,10 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     // build the octree
     for (size_t i = 0; i < arrs->cnt; ++i) {
         ps__tree_insert(&ctx->arena, ctx->root, morton_codes[i], (uint32_t)i);
+
+        arrs->fx[i] = 0.0F;
+        arrs->fy[i] = 0.0F;
+        arrs->fz[i] = 0.0F;
     }
 
     // upward pass (p2m -> m2m)
@@ -636,10 +738,9 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     // downward pass (l2l)
     ps__fmm_downward_pass(ctx->root);
 
-    // evaluation pass
-    // l2p
+    // evaluation pass (l2p->p2p)
     ps__fmm_l2p_pass(ctx->root, arrs);
-    // TODO: p2p
+    ps__fmm_p2p_pass(ctx->root, ctx->root, arrs);
 
     return PS_OK;
 }
