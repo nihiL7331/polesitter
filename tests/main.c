@@ -213,11 +213,60 @@ void test_fmm_upward_pass(void) {
     free(buffer);
 }
 
+void test_fmm_interaction_pass(void) {
+    void* buffer = malloc(1024ULL * 64);
+    TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
+
+    ps_context_t* ctx = NULL;
+    ps_config_t   cfg = {buffer, 1024ULL * 64};
+    ps_init(&ctx, &cfg);
+
+    // place particles at the centers of opposite depth 1 octants
+    float              x[2]    = {-5.0F, 5.0F};
+    float              y[2]    = {-5.0F, 5.0F};
+    float              z[2]    = {-5.0F, 5.0F};
+    float              mass[2] = {1.0F, 1.0F};
+    ps_particle_arrs_t arrs    = {x, y, z, mass, NULL, NULL, NULL, 2};
+
+    ps_result_t res = ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
+    TEST_ASSERT(res == PS_OK, "Failed to calculate forces");
+
+    ps_node_t* root = ctx->root;
+    TEST_ASSERT(root != NULL, "Root is null");
+
+    // child 0 represents the [-10, 0] bounds (center -5,-5,-5)
+    // child 7 represents the [0, 10] bounds (center 5,5,5)
+    ps_node_t* node_a = root->children[0];
+    ps_node_t* node_b = root->children[7];
+
+    TEST_ASSERT(node_a != NULL, "Node a is null");
+    TEST_ASSERT(node_b != NULL, "Node b is null");
+
+    // vector from A to B: dx=10, dy=10, dz=10
+    // dist_sq = 300, dist = sqrt(300) ~= 17.32
+    // inv_r3 = 1.0 / (dist * dist_sq) ~= 0.00019245
+    // F_field = m * dx * inv_r3 ~= 1.0 * 10 * 0.00019245 ~= 0.0019245
+    float expected_field = 0.0019245F;
+
+    // verify node a local expansion
+    TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[1], 1e-6F); // F_x
+    TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[2], 1e-6F); // F_y
+    TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[3], 1e-6F); // F_z
+
+    // verify node b local expansion
+    TEST_ASSERT_FLOAT_EQ(-expected_field, node_b->local[1], 1e-6F); // F_x
+    TEST_ASSERT_FLOAT_EQ(-expected_field, node_b->local[2], 1e-6F); // F_y
+    TEST_ASSERT_FLOAT_EQ(-expected_field, node_b->local[3], 1e-6F); // F_z
+
+    free(buffer);
+}
+
 int main(void) {
     RUN_TEST(test_morton_encoding);
     RUN_TEST(test_arena_allocator);
     RUN_TEST(test_octree_insertion);
     RUN_TEST(test_fmm_upward_pass);
+    RUN_TEST(test_fmm_interaction_pass);
 
     return 0;
 }
