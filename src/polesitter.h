@@ -218,6 +218,13 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
     return PS_OK;
 }
 
+#define PS__SWAP_PTR(type, a, b)                                               \
+    do {                                                                       \
+        type tmp = a;                                                          \
+        (a)      = b;                                                          \
+        (b)      = tmp;                                                        \
+    } while (0)
+
 // =====================================================================
 // public api implementation
 // =====================================================================
