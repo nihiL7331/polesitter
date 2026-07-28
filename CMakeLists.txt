@@ -29,7 +29,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         )
     else()
         target_compile_options(polesitter_tests PRIVATE
-            -Wall -Wextra -pedantic -O3 -march=native
+            -Wall -Wextra -pedantic -O3 -ffast-math -march=native
         )
     endif()
 
