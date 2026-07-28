@@ -361,7 +361,7 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
 
         // calc prefix sums to find the start off per bucket
         offsets[0] = 0;
-        for (int i = 0; i < 256; ++i) {
+        for (int i = 1; i < 256; ++i) {
             offsets[i] = offsets[i - 1] + counts[i - 1];
         }
 
