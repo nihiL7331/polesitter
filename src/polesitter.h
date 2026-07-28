@@ -234,6 +234,82 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
     return PS_OK;
 }
 
+// p2m (leaves) and m2m (parents) in post-order traversal
+static void ps__fmm_upward_pass(ps_node_t*                node,
+                                const ps_particle_arrs_t* arrs) {
+    if (!node) {
+        return;
+    }
+
+    // p2m
+    if (node->is_leaf) {
+        float m0 = 0.0F; // monopole (total mass)
+        float mx = 0.0F; // dipole x (mass moment)
+        float my = 0.0F; // dipole y
+        float mz = 0.0F; // dipole z
+
+        for (uint32_t i = 0; i < node->particle_cnt; ++i) {
+            uint32_t idx  = node->first_particle_idx + i;
+            float    mass = arrs->mass[idx];
+
+            // dist from particle pos to center of this voxel
+            float dx = arrs->x[idx] - node->x;
+            float dy = arrs->y[idx] - node->y;
+            float dz = arrs->z[idx] - node->z;
+
+            m0 += mass;
+            mx += mass * dx;
+            my += mass * dy;
+            mz += mass * dz;
+        }
+
+        // store expansion payload
+        node->multipole[0] = m0;
+        node->multipole[1] = mx;
+        node->multipole[2] = my;
+        node->multipole[3] = mz;
+        return;
+    }
+
+    // m2m
+    float p_m0 = 0.0F;
+    float p_mx = 0.0F;
+    float p_my = 0.0F;
+    float p_mz = 0.0F;
+
+    for (int i = 0; i < 8; ++i) {
+        ps_node_t* child = node->children[i];
+        if (child) {
+            // calc the children first
+            ps__fmm_upward_pass(child, arrs);
+
+            // dist vector from the child's center
+            // up to the parent's center
+            float dx = child->x - node->x;
+            float dy = child->y - node->y;
+            float dz = child->z - node->z;
+
+            float c_m0 = child->multipole[0];
+            float c_mx = child->multipole[1];
+            float c_my = child->multipole[2];
+            float c_mz = child->multipole[3];
+
+            // shift the childs expansion to the parents center and accumulate
+            // dipole requires the monopole * dist
+            p_m0 += c_m0;
+            p_mx += c_mx + (c_m0 * dx);
+            p_my += c_my + (c_m0 * dy);
+            p_mz += c_mz + (c_m0 * dz);
+        }
+    }
+
+    // store aggregated expansion in parent
+    node->multipole[0] = p_m0;
+    node->multipole[1] = p_mx;
+    node->multipole[2] = p_my;
+    node->multipole[3] = p_mz;
+}
+
 #define PS__SWAP_PTR(type, a, b)                                               \
     do {                                                                       \
         type tmp = a;                                                          \
@@ -410,6 +486,9 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     for (size_t i = 0; i < arrs->cnt; ++i) {
         ps__tree_insert(&ctx->arena, ctx->root, morton_codes[i], (uint32_t)i);
     }
+
+    // upward pass (p2m -> m2m)
+    ps__fmm_upward_pass(ctx->root, arrs);
 
     // TODO: passes come here
 
