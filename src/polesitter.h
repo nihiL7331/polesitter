@@ -396,6 +396,28 @@ static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
     }
 }
 
+// pass 3
+// l2l, pushes the accumulated background field from parents down to their
+// children
+static void ps__fmm_downward_pass(ps_node_t* node) {
+    if (!node || node->is_leaf) {
+        return;
+    }
+
+    for (int i = 0; i < 8; ++i) {
+        ps_node_t* child = node->children[i];
+        if (child) {
+            // 1-st order local expansion,
+            // shifting it is adding the parent's field to the child's field
+            child->local[1] += node->local[1];
+            child->local[2] += node->local[2];
+            child->local[3] += node->local[3];
+
+            ps__fmm_downward_pass(child);
+        }
+    }
+}
+
 #define PS__SWAP_PTR(type, a, b)                                               \
     do {                                                                       \
         type tmp = a;                                                          \
@@ -579,6 +601,9 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
 
     // interaction pass (m2l)
     ps__fmm_interaction_pass(ctx->root, ctx->root);
+
+    // downward pass (l2l)
+    ps__fmm_downward_pass(ctx->root);
 
     // TODO: passes come here
 
