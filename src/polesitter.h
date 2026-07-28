@@ -1,17 +1,40 @@
 #ifndef POLESITTER_H
 #define POLESITTER_H
 
+#include <stddef.h>
 #include <stdint.h>
 
-#ifndef POLESITTER_MALLOC
-#    include <stdlib.h>
-#    define POLESITTER_MALLOC(sz) malloc(sz)
-#    define POLESITTER_FREE(ptr)  free(ptr)
-#endif
+// =====================================================================
+// public api
+// =====================================================================
+
+typedef enum {
+    PS_OK     = 0,
+    PS_EOOM   = -1, // out of memory
+    PS_EINVAL = -2, // invalid argument
+} ps_result_t;
+
+typedef struct ps_context ps_context_t;
+
+typedef struct {
+    void*  buff;      // ram provided by host
+    size_t buff_size; // total size in B
+} ps_config_t;
+
+// init pipeline with a pre-allocated buffer.
+ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf);
+
+#endif // POLESITTER_H
+
+#ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
-// arena allocator
+// internal implementation
 // =====================================================================
+
+// ---------------------------------------------------------------------
+// arena allocator
+// ---------------------------------------------------------------------
 
 typedef struct {
     uint8_t* mem;
@@ -19,18 +42,9 @@ typedef struct {
     size_t   off;
 } ps_arena_t;
 
-// init arena with pre-allocated/externally provided buffer
-static void ps_arena_init(ps_arena_t* arena, void* buffer, size_t cap);
-
-// alloc raw bytes with a specified align (16 for SIMD)
-static void* ps_arena_alloc(ps_arena_t* arena, size_t size, size_t align);
-
-// clear for next frame
-static void ps_arena_clear(ps_arena_t* arena);
-
-#endif // POLESITTER_H
-
-#ifdef POLESITTER_IMPLEMENTATION
+struct ps_context {
+    ps_arena_t arena;
+};
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
 static uint32_t ps__expand_bits(uint32_t v) {
@@ -61,12 +75,14 @@ static inline size_t ps_align_forward(size_t v, size_t align) {
     return (v + (align - 1)) & ~(align - 1);
 }
 
+// init arena with pre-allocated/externally provided buffer
 static void ps_arena_init(ps_arena_t* arena, void* buffer, size_t cap) {
     arena->mem = (uint8_t*)buffer;
     arena->cap = cap;
     arena->off = 0;
 }
 
+// alloc raw bytes with a specified align (16 for SIMD)
 static void* ps_arena_alloc(ps_arena_t* arena, size_t size, size_t align) {
     // current aligned address offset
     size_t curr_addr  = (size_t)(arena->mem + arena->off);
@@ -87,8 +103,29 @@ static void* ps_arena_alloc(ps_arena_t* arena, size_t size, size_t align) {
     return ptr;
 }
 
+// clear for next frame
 static void ps_arena_clear(ps_arena_t* arena) {
     arena->off = 0;
+}
+
+// =====================================================================
+// public api implementation
+// =====================================================================
+
+ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
+    if (!conf || !conf->buff || conf->buff_size < sizeof(ps_context_t))
+        return PS_EINVAL;
+
+    // place ctx at beginning of buffer
+    ps_context_t* ctx = (ps_context_t*)conf->buff;
+
+    // arena takes the rest
+    size_t arena_start = sizeof(ps_context_t);
+    ps_arena_init(&ctx->arena, (uint8_t*)conf->buff + arena_start,
+                  conf->buff_size - arena_start);
+
+    *out_ctx = ctx;
+    return PS_OK;
 }
 
 #endif // POLESITTER_IMPLEMENTATION
