@@ -89,9 +89,58 @@ void test_arena_allocator(void) {
         "4th allocation should reuse the same memory as 1st allocation");
 }
 
+void test_octree_insertion(void) {
+    uint8_t       buffer[4096];
+    ps_context_t* ctx    = NULL;
+    ps_config_t   config = {buffer, sizeof(buffer)};
+
+    ps_result_t res = ps_init(&ctx, &config);
+    TEST_ASSERT(res == PS_OK && "Failed to initialize context");
+    TEST_ASSERT(ctx != NULL && "Context pointer is null");
+
+    // alloc the root node directly from arena
+    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    TEST_ASSERT(ctx->root != NULL && "Failed to allocate root node");
+    ps__node_init(ctx->root);
+
+    // morton code is 0, tree should traverse down children[0] at every level
+    uint32_t morton_zero = ps__morton_encode(0, 0, 0);
+    res = ps__tree_insert(&ctx->arena, ctx->root, morton_zero, 42);
+    TEST_ASSERT(res == PS_OK && "Failed to insert origin particle");
+
+    ps_node_t* curr = ctx->root;
+    for (int i = 0; i < 10 /* PS_MAX_DEPTH */; ++i) {
+        TEST_ASSERT(curr->children[0] != NULL &&
+                    "Missing child in origin path");
+        curr = curr->children[0];
+    }
+    TEST_ASSERT(curr->is_leaf && "Bottom node is not marked as leaf");
+    TEST_ASSERT(curr->particle_cnt == 1 && "Leaf particle count is wrong");
+    TEST_ASSERT(curr->first_particle_idx == 42 &&
+                "Leaf stored wrong particle idx");
+
+    // maximum bounds test, tree should traverse down children[7] at every level
+    uint32_t morton_max = ps__morton_encode(1023, 1023, 1023);
+    res = ps__tree_insert(&ctx->arena, ctx->root, morton_max, 99);
+    TEST_ASSERT(res == PS_OK && "Failed to insert max bounds particle");
+
+    curr = ctx->root;
+    for (int i = 0; i < 10 /* PS_MAX_DEPTH */; ++i) {
+        TEST_ASSERT(curr->children[7] != NULL &&
+                    "Missing child in max bounds path");
+        curr = curr->children[7];
+    }
+
+    TEST_ASSERT(curr->is_leaf && "Bottom node is not marked as leaf");
+    TEST_ASSERT(curr->particle_cnt == 1 && "Leaf particle count is wrong");
+    TEST_ASSERT(curr->first_particle_idx == 99 &&
+                "Leaf stored wrong particle idx");
+}
+
 int main(void) {
     RUN_TEST(test_morton_encoding);
     RUN_TEST(test_arena_allocator);
+    RUN_TEST(test_octree_insertion);
 
     return 0;
 }
