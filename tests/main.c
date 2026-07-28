@@ -5,14 +5,16 @@
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
-#define TEST_ASSERT(expr)                                                      \
-    do {                                                                       \
-        if (!(expr)) {                                                         \
-            (void)fprintf(stderr, "\n[FAIL] Assertion failed: %s (%s:%d)\n",   \
-                          #expr, __FILE__, __LINE__);                          \
-            exit(EXIT_FAILURE);                                                \
-        }                                                                      \
-    } while (0)
+static void ps_assert(int cond, const char* expr_str, const char* file,
+                      int line) {
+    if (!cond) {
+        (void)fprintf(stderr, "\n[FAIL] Assertion failed: %s (%s:%d)\n",
+                      expr_str, file, line);
+        exit(EXIT_FAILURE);
+    }
+}
+
+#define TEST_ASSERT(expr) ps_assert((expr) ? 1 : 0, #expr, __FILE__, __LINE__)
 
 #define RUN_TEST(test_func)                                                    \
     do {                                                                       \
