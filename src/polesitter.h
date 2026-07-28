@@ -225,6 +225,81 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
         (b)      = tmp;                                                        \
     } while (0)
 
+static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
+                                      const ps_particle_arrs_t* arrs) {
+    size_t cnt = arrs->cnt;
+    if (cnt == 0) {
+        return PS_OK;
+    }
+
+    // borrow temp SoA buffers from the arena
+    uint32_t* m_tmp =
+        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 16);
+    float* x_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
+    float* y_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
+    float* z_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
+    float* mass_tmp = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
+
+    if (!m_tmp || !x_tmp || !y_tmp || !z_tmp || !mass_tmp) {
+        return PS_EOOM;
+    }
+
+    uint32_t* m_src    = morton_codes;
+    uint32_t* m_dst    = m_tmp;
+    float*    x_src    = arrs->x;
+    float*    x_dst    = x_tmp;
+    float*    y_src    = arrs->y;
+    float*    y_dst    = y_tmp;
+    float*    z_src    = arrs->z;
+    float*    z_dst    = z_tmp;
+    float*    mass_src = arrs->mass;
+    float*    mass_dst = mass_tmp;
+
+    // 4 passes of 8b radix sort
+    for (int pass = 0; pass < 4; ++pass) {
+        uint32_t counts[256]  = {0};
+        uint32_t offsets[256] = {0};
+        int      shift        = pass * 8;
+
+        // count frequencies of current 8b chunk
+        for (size_t i = 0; i < cnt; ++i) {
+            uint8_t bucket = (m_src[i] >> shift) & 0xFF;
+            counts[bucket]++;
+        }
+
+        // calc prefix sums to find the start off per bucket
+        offsets[0] = 0;
+        for (int i = 0; i < 256; ++i) {
+            offsets[i] = offsets[i - 1] + counts[i - 1];
+        }
+
+        // distribute the data into dest buffers
+        for (size_t i = 0; i < cnt; ++i) {
+            uint8_t  bucket  = (m_src[i] >> shift) & 0xFF;
+            uint32_t dst_idx = offsets[bucket]++;
+
+            m_dst[dst_idx]    = m_src[i];
+            x_dst[dst_idx]    = x_src[i];
+            y_dst[dst_idx]    = y_src[i];
+            z_dst[dst_idx]    = z_src[i];
+            mass_dst[dst_idx] = mass_src[i];
+        }
+
+        // pingpong pointers for next pass
+        PS__SWAP_PTR(uint32_t*, m_src, m_dst);
+        PS__SWAP_PTR(float*, x_src, x_dst);
+        PS__SWAP_PTR(float*, y_src, y_dst);
+        PS__SWAP_PTR(float*, z_src, z_dst);
+        PS__SWAP_PTR(float*, mass_src, mass_dst);
+    }
+
+    // 4 is an even number, so m_src is guaranteed to be pointing back to the
+    // orig morton_codes arr, and x_src back to arrs->x. the sorted data is
+    // right where it started. temp arrays will be cleared next frame.
+
+    return PS_OK;
+}
+
 // =====================================================================
 // public api implementation
 // =====================================================================
