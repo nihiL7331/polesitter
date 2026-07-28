@@ -5,6 +5,15 @@
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
+#define TEST_ASSERT(expr)                                                      \
+    do {                                                                       \
+        if (!(expr)) {                                                         \
+            (void)fprintf(stderr, "\n[FAIL] Assertion failed: %s (%s:%d)\n",   \
+                          #expr, __FILE__, __LINE__);                          \
+            exit(EXIT_FAILURE);                                                \
+        }                                                                      \
+    } while (0)
+
 #define RUN_TEST(test_func)                                                    \
     do {                                                                       \
         printf("[ ] %s...\n", #test_func);                                     \
@@ -19,7 +28,7 @@ void test_morton_encoding(void) {
     // x = 1 (001)
     // should land at bit 0 -> 0001
     uint32_t code_x = ps__morton_encode(1, 0, 0);
-    assert(code_x == 1 /* 0b0001 */ && "Morton code for x=1 failed");
+    TEST_ASSERT(code_x == 1 /* 0b0001 */);
 
     // y = 1 (001)
     // should land at bit 1 -> 0010
