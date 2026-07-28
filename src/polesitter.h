@@ -329,7 +329,7 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
     ps_context_t* ctx = (ps_context_t*)conf->buff;
 
     // arena takes the rest
-    size_t arena_start = sizeof(ps_context_t);
+    size_t arena_start = ps_align_forward(sizeof(ps_context_t), 16);
     ps_arena_init(&ctx->arena, (uint8_t*)conf->buff + arena_start,
                   conf->buff_size - arena_start);
 
