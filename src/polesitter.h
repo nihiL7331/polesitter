@@ -26,6 +26,7 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf);
 
 #endif // POLESITTER_H
 
+#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -45,10 +46,14 @@ typedef struct {
 // octree node
 typedef struct ps_node {
     // physics, 16B
-    float com_x;
-    float com_y;
-    float com_z;
-    float mass;
+    float x;
+    float y;
+    float z;
+    float half_width; // needed for M2L
+
+    // FMM payload, 32B (monopole + dipole)
+    float multipole[4];
+    float local[4];
 
     // structure, 64B
     struct ps_node* children[8];
@@ -116,8 +121,9 @@ static void* ps_arena_alloc(ps_arena_t* arena, size_t size, size_t align) {
 
     // check if we have enough space in the arena
     size_t total_req = size + pad;
-    if (arena->off + total_req > arena->cap)
+    if (arena->off + total_req > arena->cap) {
         return NULL;
+    }
 
     // advance bump pointer and return aligned address
     void* ptr = (void*)align_addr;
@@ -136,13 +142,14 @@ static void ps_arena_clear(ps_arena_t* arena) {
 
 // zero out a newly allocated node
 static void ps__node_init(ps_node_t* node) {
-    node->com_x = 0.0f;
-    node->com_y = 0.0f;
-    node->com_z = 0.0f;
-    node->mass  = 0.0f;
+    node->x          = 0.0F;
+    node->y          = 0.0F;
+    node->z          = 0.0F;
+    node->half_width = 0.0F;
 
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < 8; ++i) {
         node->children[i] = NULL;
+    }
 
     node->is_leaf            = 0;
     node->particle_cnt       = 0;
@@ -153,8 +160,9 @@ static void ps__node_init(ps_node_t* node) {
 static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
                                    uint32_t morton_code,
                                    uint32_t particle_idx) {
-    if (!root)
+    if (!root) {
         return PS_EINVAL;
+    }
 
     ps_node_t* curr = root;
     for (int depth = 0; depth < PS_MAX_DEPTH; ++depth) {
@@ -165,8 +173,9 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
         if (!curr->children[octant]) {
             ps_node_t* new_node =
                 (ps_node_t*)ps_arena_alloc(arena, sizeof(ps_node_t), 16);
-            if (!new_node)
+            if (!new_node) {
                 return PS_EOOM;
+            }
 
             ps__node_init(new_node);
             curr->children[octant] = new_node;
@@ -177,8 +186,9 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
 
     curr->is_leaf = 1;
 
-    if (curr->particle_cnt == 0)
+    if (curr->particle_cnt == 0) {
         curr->first_particle_idx = particle_idx;
+    }
 
     curr->particle_cnt++;
 
@@ -190,8 +200,9 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
 // =====================================================================
 
 ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
-    if (!conf || !conf->buff || conf->buff_size < sizeof(ps_context_t))
+    if (!conf || !conf->buff || conf->buff_size < sizeof(ps_context_t)) {
         return PS_EINVAL;
+    }
 
     // place ctx at beginning of buffer
     ps_context_t* ctx = (ps_context_t*)conf->buff;
