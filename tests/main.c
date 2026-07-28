@@ -261,12 +261,54 @@ void test_fmm_interaction_pass(void) {
     free(buffer);
 }
 
+void test_fmm_downward_pass(void) {
+    void* buffer = malloc(1024ULL * 64);
+    TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
+
+    ps_context_t* ctx = NULL;
+    ps_config_t   cfg = {buffer, 1024ULL * 64};
+    ps_init(&ctx, &cfg);
+
+    // manually allocate and send the root
+    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ps__node_init(ctx->root);
+    ctx->root->half_width = 10.0F;
+
+    // insert a single particle to create a deep branch
+    uint32_t morton_max = ps__morton_encode(1023, 1023, 1023);
+    ps__tree_insert(&ctx->arena, ctx->root, morton_max, 42);
+
+    // inject a bg field at the root node
+    ctx->root->local[1] = 5.0F;  // F_x
+    ctx->root->local[2] = -3.5F; // F_y
+    ctx->root->local[3] = 42.0F; // F_z
+
+    ps__fmm_downward_pass(ctx->root);
+
+    // traverse to the bottom leaf node
+    ps_node_t* curr = ctx->root;
+    for (int i = 0; i < 10 /* PS_MAX_DEPTH */; ++i) {
+        TEST_ASSERT(curr->children[7] != NULL, "Missing child in path");
+        curr = curr->children[7];
+    }
+
+    TEST_ASSERT(curr->is_leaf, "Bottom nod eis not marked as leaf");
+
+    // verify the field cascaded down properly
+    TEST_ASSERT_FLOAT_EQ(5.0F, curr->local[1], 1e-6F);  // F_x
+    TEST_ASSERT_FLOAT_EQ(-3.5F, curr->local[2], 1e-6F); // F_y
+    TEST_ASSERT_FLOAT_EQ(42.0F, curr->local[3], 1e-6F); // F_z
+
+    free(buffer);
+}
+
 int main(void) {
     RUN_TEST(test_morton_encoding);
     RUN_TEST(test_arena_allocator);
     RUN_TEST(test_octree_insertion);
     RUN_TEST(test_fmm_upward_pass);
     RUN_TEST(test_fmm_interaction_pass);
+    RUN_TEST(test_fmm_downward_pass);
 
     return 0;
 }
