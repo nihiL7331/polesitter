@@ -147,6 +147,11 @@ static void ps__node_init(ps_node_t* node) {
     node->z          = 0.0F;
     node->half_width = 0.0F;
 
+    for (int i = 0; i < 4; ++i) {
+        node->multipole[i] = 0.0F;
+        node->local[i]     = 0.0F;
+    }
+
     for (int i = 0; i < 8; ++i) {
         node->children[i] = NULL;
     }
