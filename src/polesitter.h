@@ -165,10 +165,22 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
     }
 
     ps_node_t* curr = root;
+
+    float curr_x  = root->x;
+    float curr_y  = root->y;
+    float curr_z  = root->z;
+    float curr_hw = root->half_width;
+
     for (int depth = 0; depth < PS_MAX_DEPTH; ++depth) {
         // shift starts at 27, decreases by 3 each lvl
         int      shift  = 27 - (depth * 3);
         uint32_t octant = (morton_code >> shift) & 0x7; // 3 bits for octant
+
+        curr_hw *= 0.5F;
+
+        curr_x += (octant & 0x1 /* bit 0 */) ? curr_hw : -curr_hw;
+        curr_y += (octant & 0x2 /* bit 1 */) ? curr_hw : -curr_hw;
+        curr_z += (octant & 0x4 /* bit 2 */) ? curr_hw : -curr_hw;
 
         if (!curr->children[octant]) {
             ps_node_t* new_node =
@@ -178,6 +190,12 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
             }
 
             ps__node_init(new_node);
+
+            new_node->x          = curr_x;
+            new_node->y          = curr_y;
+            new_node->z          = curr_z;
+            new_node->half_width = curr_hw;
+
             curr->children[octant] = new_node;
         }
 
