@@ -26,6 +26,7 @@
 #ifndef POLESITTER_H
 #define POLESITTER_H
 
+#include <float.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -748,8 +749,8 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
         return PS_EINVAL;
     }
 
-    float min_b = 99999.0F;
-    float max_b = -99999.0F;
+    float min_b = FLT_MAX;
+    float max_b = -FLT_MAX; // FLT_MIN is minimum normalized positive float
 
     // find cubic bb bounds
     for (size_t i = 0; i < arrs->cnt; i++) {
