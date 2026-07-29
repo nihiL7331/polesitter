@@ -52,7 +52,8 @@ void direct_nbody_baseline(const ps_particle_arrs_t* arrs) {
 }
 
 int main(void) {
-    int test_sizes[] = {1000, 2500, 5000, 10000, 15000, 20000, 25000, 100000};
+    int test_sizes[] = {1000,  2500,  5000,  10000,  15000,  20000,
+                        25000, 50000, 75000, 100000, 150000, 200000};
     int num_tests    = sizeof(test_sizes) / sizeof(test_sizes[0]);
 
     printf("N,Direct_Time,FMM_Time\n");
