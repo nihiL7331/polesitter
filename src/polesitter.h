@@ -594,6 +594,9 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
         return PS_OK;
     }
 
+    // used later to reclaim temp memory
+    size_t tmp_off = arena->off;
+
     // borrow temp SoA buffers from the arena
     uint32_t* m_tmp =
         (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 16);
@@ -660,6 +663,9 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
         PS__SWAP_PTR(float*, z_src, z_dst);
         PS__SWAP_PTR(float*, mass_src, mass_dst);
     }
+
+    // reclaim memory
+    arena->off = tmp_off;
 
     // 4 is an even number, so m_src is guaranteed to be pointing back to the
     // orig morton_codes arr, and x_src back to arrs->x. the sorted data is
