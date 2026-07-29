@@ -525,7 +525,7 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
             for (uint32_t j = 0; j < src->particle_cnt; ++j) {
                 uint32_t s_idx = src->first_particle_idx + j;
 
-                float mask = (t_idx == s_idx) ? 0.0F : 1.0F;
+                float mask = (float)(t_idx != s_idx);
 
                 float p_dx = sx[s_idx] - t_x;
                 float p_dy = sy[s_idx] - t_y;
