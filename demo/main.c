@@ -7,7 +7,8 @@
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
-#define PARTICLE_COUNT     2000
+#define PARTICLE_COUNT     20000
+#define BLACKHOLE_MASS     1000.0F
 #define ARENA_SIZE         (1024ULL * 1024ULL * 256ULL)
 #define MAX_EXPECTED_SPEED 20
 
@@ -16,6 +17,8 @@ float    vy[PARTICLE_COUNT]           = {0};
 float    vz[PARTICLE_COUNT]           = {0};
 uint32_t morton_codes[PARTICLE_COUNT] = {0};
 uint32_t id[PARTICLE_COUNT]           = {0};
+
+uint32_t frame_counter = 0;
 
 Camera3D camera = {0};
 
@@ -76,7 +79,7 @@ void init_particles(void) {
 
         mass[i] = 0.1F;
 
-        float v_mag = sqrtf(100.0F / (radius + 1.0F));
+        float v_mag = sqrtf(BLACKHOLE_MASS / (radius + 1.0F));
         vx[i]       = -sinf(angle) * v_mag;
         vy[i]       = 0.0F;
         vz[i]       = cosf(angle) * v_mag;
@@ -88,7 +91,7 @@ void init_particles(void) {
     vx[0]   = 0.0F;
     vy[0]   = 0.0F;
     vz[0]   = 0.0F;
-    mass[0] = 5000.0F;
+    mass[0] = BLACKHOLE_MASS;
 }
 
 int main(void) {
@@ -145,13 +148,10 @@ void update(void) {
         vz[i] = tmp_vz[i];
     }
 
-    float dt = GetFrameTime();
-    if (dt > 0.033F) {
-        dt = 0.033F;
-    }
+    float dt = 0.0333F * 0.025F;
 
     for (int i = 0; i < PARTICLE_COUNT; i++) {
-        if (mass[i] >= 5000.0F) {
+        if (mass[i] == BLACKHOLE_MASS) {
             vx[i] = 0.0F;
             vy[i] = 0.0F;
             vz[i] = 0.0F;
@@ -179,6 +179,10 @@ void update(void) {
         px[i] += vx[i] * dt;
         py[i] += vy[i] * dt;
         pz[i] += vz[i] * dt;
+    }
+
+    if (frame_counter++ == 30 * 40) {
+        CloseWindow();
     }
 }
 
@@ -210,10 +214,11 @@ void draw(void) {
                               (unsigned char)(180 - (f * 100)),
                               (unsigned char)(255 - (f * 255)), 255};
         }
-        DrawSphereEx((Vector3){px[i], py[i], pz[i]}, 0.08F, 3, 3, p_color);
+        DrawPoint3D((Vector3){px[i], py[i], pz[i]}, p_color);
     }
 
     EndBlendMode();
     EndMode3D();
-    DrawFPS(10, 10);
+
+    TakeScreenshot(TextFormat("frames/frame_%04d.png", frame_counter));
 }
