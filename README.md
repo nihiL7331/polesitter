@@ -1,6 +1,10 @@
 # polesitter
 Header-only FMM implementation written in C17.
 
+<p align="center">
+      <img src="docs/output.webp" alt="Polesitter demo" width="600">
+</p>
+
 ## Benchmark
 
 ![Linear Naive/FMM comparison graph.](/docs/performance_graph.png)
