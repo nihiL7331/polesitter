@@ -23,14 +23,15 @@ typedef struct {
 } ps_config_t;
 
 typedef struct {
-    float* x;
-    float* y;
-    float* z;
-    float* mass;
-    float* fx;
-    float* fy;
-    float* fz;
-    size_t cnt;
+    float*    x;
+    float*    y;
+    float*    z;
+    float*    mass;
+    float*    fx;
+    float*    fy;
+    float*    fz;
+    uint32_t* id;
+    size_t    cnt;
 } ps_particle_arrs_t;
 
 // init pipeline with a pre-allocated buffer.
@@ -38,8 +39,14 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf);
 
 // compute forces on particles using FMM
 ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
-                           float root_cx, float root_cy, float root_cz,
-                           float root_hw);
+                           uint32_t* morton_codes, float root_cx, float root_cy,
+                           float root_cz, float root_hw);
+
+// calculates the global bounding box and generates morton codes for all
+// particles
+ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
+                                 uint32_t* out_morton_codes, float* out_min_b,
+                                 float* out_max_b, float* out_range);
 
 #endif // POLESITTER_H
 
@@ -484,29 +491,29 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
             float f_y = 0.0F;
             float f_z = 0.0F;
 
+            const float* restrict sx = arrs->x;
+            const float* restrict sy = arrs->y;
+            const float* restrict sz = arrs->z;
+            const float* restrict sm = arrs->mass;
+
             for (uint32_t j = 0; j < src->particle_cnt; ++j) {
                 uint32_t s_idx = src->first_particle_idx + j;
 
-                // skip self
-                if (t_idx == s_idx) {
-                    continue;
-                }
+                float mask = (t_idx == s_idx) ? 0.0F : 1.0F;
 
-                float p_dx = arrs->x[s_idx] - t_x;
-                float p_dy = arrs->y[s_idx] - t_y;
-                float p_dz = arrs->z[s_idx] - t_z;
+                float p_dx = sx[s_idx] - t_x;
+                float p_dy = sy[s_idx] - t_y;
+                float p_dz = sz[s_idx] - t_z;
 
                 // add negligible value to prevent div by 0
                 float p_dist_sq =
-                    (p_dx * p_dx) + (p_dy * p_dy) + (p_dz * p_dz) + 1e-4F;
+                    (p_dx * p_dx) + (p_dy * p_dy) + (p_dz * p_dz) + 2.0F;
 
                 float inv_dist  = 1.0F / sqrtf(p_dist_sq);
                 float inv_dist3 = inv_dist * inv_dist * inv_dist;
 
-                float s_mass = arrs->mass[s_idx];
-
                 // gravity force magnitude
-                float force = s_mass * inv_dist3;
+                float force = sm[s_idx] * inv_dist3 * mask;
 
                 f_x += p_dx * force;
                 f_y += p_dy * force;
@@ -564,6 +571,8 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
     // borrow temp SoA buffers from the arena
     uint32_t* m_tmp =
         (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 16);
+    uint32_t* id_tmp =
+        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 16);
     float* x_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
     float* y_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
     float* z_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
@@ -575,6 +584,8 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
 
     uint32_t* m_src    = morton_codes;
     uint32_t* m_dst    = m_tmp;
+    uint32_t* id_src   = arrs->id;
+    uint32_t* id_dst   = id_tmp;
     float*    x_src    = arrs->x;
     float*    x_dst    = x_tmp;
     float*    y_src    = arrs->y;
@@ -608,6 +619,7 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
             uint32_t dst_idx = offsets[bucket]++;
 
             m_dst[dst_idx]    = m_src[i];
+            id_dst[dst_idx]   = id_src[i];
             x_dst[dst_idx]    = x_src[i];
             y_dst[dst_idx]    = y_src[i];
             z_dst[dst_idx]    = z_src[i];
@@ -616,6 +628,7 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
 
         // pingpong pointers for next pass
         PS__SWAP_PTR(uint32_t*, m_src, m_dst);
+        PS__SWAP_PTR(uint32_t*, id_src, id_dst);
         PS__SWAP_PTR(float*, x_src, x_dst);
         PS__SWAP_PTR(float*, y_src, y_dst);
         PS__SWAP_PTR(float*, z_src, z_dst);
@@ -652,56 +665,14 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
 }
 
 ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
-                           float root_cx, float root_cy, float root_cz,
-                           float root_hw) {
+                           uint32_t* morton_codes, float root_cx, float root_cy,
+                           float root_cz, float root_hw) {
     if (!ctx || !arrs) {
         return PS_EINVAL;
     }
 
     // clear arena for new frame
     ps_arena_clear(&ctx->arena);
-
-    // borrow scratch memory from arena for morton codes
-    uint32_t* morton_codes = (uint32_t*)ps_arena_alloc(
-        &ctx->arena, arrs->cnt * sizeof(uint32_t), 16);
-    if (!morton_codes) {
-        return PS_EOOM;
-    }
-
-    // precalculate morton codes
-    for (size_t i = 0; i < arrs->cnt; ++i) {
-        // normalize particle position to [0, 1] based on root node
-        float nx = (arrs->x[i] - (root_cx - root_hw)) / (2.0F * root_hw);
-        float ny = (arrs->y[i] - (root_cy - root_hw)) / (2.0F * root_hw);
-        float nz = (arrs->z[i] - (root_cz - root_hw)) / (2.0F * root_hw);
-
-        // clamp to [0, 1]
-        if (nx < 0.0F) {
-            nx = 0.0F;
-        }
-        if (ny < 0.0F) {
-            ny = 0.0F;
-        }
-        if (nz < 0.0F) {
-            nz = 0.0F;
-        }
-        if (nx > 1.0F) {
-            nx = 1.0F;
-        }
-        if (ny > 1.0F) {
-            ny = 1.0F;
-        }
-        if (nz > 1.0F) {
-            nz = 1.0F;
-        }
-
-        // scale to [0, 1023] for morton encoding
-        uint32_t ix = (uint32_t)(nx * 1023.0F);
-        uint32_t iy = (uint32_t)(ny * 1023.0F);
-        uint32_t iz = (uint32_t)(nz * 1023.0F);
-
-        morton_codes[i] = ps__morton_encode(ix, iy, iz);
-    }
 
     // sort the arrays based on morton_codes as keys
     ps__sort_particles(&ctx->arena, morton_codes, arrs);
@@ -741,6 +712,85 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     // evaluation pass (l2p->p2p)
     ps__fmm_l2p_pass(ctx->root, arrs);
     ps__fmm_p2p_pass(ctx->root, ctx->root, arrs);
+
+    return PS_OK;
+}
+
+ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
+                                 uint32_t* out_morton_codes, float* out_min_b,
+                                 float* out_max_b, float* out_range) {
+    if (!arrs || !out_morton_codes || arrs->cnt == 0) {
+        return PS_EINVAL;
+    }
+
+    float min_b = 99999.0F;
+    float max_b = -99999.0F;
+
+    // find cubic bb bounds
+    for (size_t i = 0; i < arrs->cnt; i++) {
+        if (arrs->x[i] < min_b) {
+            min_b = arrs->x[i];
+        }
+        if (arrs->y[i] < min_b) {
+            min_b = arrs->y[i];
+        }
+        if (arrs->z[i] < min_b) {
+            min_b = arrs->z[i];
+        }
+
+        if (arrs->x[i] > max_b) {
+            max_b = arrs->x[i];
+        }
+        if (arrs->y[i] > max_b) {
+            max_b = arrs->y[i];
+        }
+        if (arrs->z[i] > max_b) {
+            max_b = arrs->z[i];
+        }
+    }
+
+    float range = max_b - min_b;
+    if (range < 0.001F) {
+        range = 0.001F;
+    }
+
+    // gen morton codes mapped to 0-1023
+    for (size_t i = 0; i < arrs->cnt; i++) {
+        int mx = (int)(((arrs->x[i] - min_b) / range) * 1023.0F);
+        int my = (int)(((arrs->y[i] - min_b) / range) * 1023.0F);
+        int mz = (int)(((arrs->z[i] - min_b) / range) * 1023.0F);
+
+        if (mx < 0) {
+            mx = 0;
+        }
+        if (mx > 1023) {
+            mx = 1023;
+        }
+        if (my < 0) {
+            my = 0;
+        }
+        if (my > 1023) {
+            my = 1023;
+        }
+        if (mz < 0) {
+            mz = 0;
+        }
+        if (mz > 1023) {
+            mz = 1023;
+        }
+
+        out_morton_codes[i] = ps__morton_encode(mx, my, mz);
+    }
+
+    if (out_min_b) {
+        *out_min_b = min_b;
+    }
+    if (out_max_b) {
+        *out_max_b = max_b;
+    }
+    if (out_range) {
+        *out_range = range;
+    }
 
     return PS_OK;
 }

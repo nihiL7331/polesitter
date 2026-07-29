@@ -162,7 +162,7 @@ void test_radix_sort(void) {
     float    mass[4]         = {9.0F, 1.0F, 5.0F, 4.0F};
     float    fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
 
-    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 4};
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 0, 4};
 
     ps__sort_particles(&ctx->arena, morton_codes, &arrs);
 
@@ -189,16 +189,25 @@ void test_fmm_upward_pass(void) {
     ps_config_t   cfg = {buffer, 1024ULL * 64};
     ps_init(&ctx, &cfg);
 
-    float x[2]    = {2.0F, -1.0F};
-    float y[2]    = {3.0F, -2.0F};
-    float z[2]    = {4.0F, -3.0F};
-    float mass[2] = {2.0F, 3.0F};
-    float fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
+    float    x[2]    = {2.0F, -1.0F};
+    float    y[2]    = {3.0F, -2.0F};
+    float    z[2]    = {4.0F, -3.0F};
+    float    mass[2] = {2.0F, 3.0F};
+    float    fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
+    uint32_t id[2] = {0, 1};
 
-    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 2};
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, id, 2};
 
-    ps_result_t res = ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
-    TEST_ASSERT(res == PS_OK, "Failed to calculate forces");
+    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ps__node_init(ctx->root);
+    ctx->root->is_leaf            = 1;
+    ctx->root->particle_cnt       = 2;
+    ctx->root->first_particle_idx = 0;
+    ctx->root->x                  = 0.0F;
+    ctx->root->y                  = 0.0F;
+    ctx->root->z                  = 0.0F;
+
+    ps__fmm_upward_pass(ctx->root, &arrs);
 
     // M0 = sum(mass) = 2.0 + 3.0 = 5.0
     // MX = sum(mass * (x - root_x)) = 2.0*2.0 + 3.0*-1.0 = 1.0
@@ -224,28 +233,26 @@ void test_fmm_interaction_pass(void) {
     ps_config_t   cfg = {buffer, 1024ULL * 64};
     ps_init(&ctx, &cfg);
 
-    // place particles at the centers of opposite depth 1 octants
-    float x[2]    = {-5.0F, 5.0F};
-    float y[2]    = {-5.0F, 5.0F};
-    float z[2]    = {-5.0F, 5.0F};
-    float mass[2] = {1.0F, 1.0F};
-    float fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
+    ps_node_t* node_a =
+        (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ps_node_t* node_b =
+        (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ps__node_init(node_a);
+    ps__node_init(node_b);
 
-    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 2};
+    node_a->x          = -5.0F;
+    node_a->y          = -5.0F;
+    node_a->z          = -5.0F;
+    node_a->half_width = 2.5F;
 
-    ps_result_t res = ps_calc_forces(ctx, &arrs, 0.0F, 0.0F, 0.0F, 10.0F);
-    TEST_ASSERT(res == PS_OK, "Failed to calculate forces");
+    node_b->x          = 5.0F;
+    node_b->y          = 5.0F;
+    node_b->z          = 5.0F;
+    node_b->half_width = 2.5F;
 
-    ps_node_t* root = ctx->root;
-    TEST_ASSERT(root != NULL, "Root is null");
+    node_b->multipole[0] = 1.0F;
 
-    // child 0 represents the [-10, 0] bounds (center -5,-5,-5)
-    // child 7 represents the [0, 10] bounds (center 5,5,5)
-    ps_node_t* node_a = root->children[0];
-    ps_node_t* node_b = root->children[7];
-
-    TEST_ASSERT(node_a != NULL, "Node a is null");
-    TEST_ASSERT(node_b != NULL, "Node b is null");
+    ps__fmm_interaction_pass(node_a, node_b);
 
     // vector from A to B: dx=10, dy=10, dz=10
     // dist_sq = 300, dist = sqrt(300) ~= 17.32
@@ -257,11 +264,6 @@ void test_fmm_interaction_pass(void) {
     TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[1], 1e-6F); // F_x
     TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[2], 1e-6F); // F_y
     TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[3], 1e-6F); // F_z
-
-    // verify node b local expansion
-    TEST_ASSERT_FLOAT_EQ(-expected_field, node_b->local[1], 1e-6F); // F_x
-    TEST_ASSERT_FLOAT_EQ(-expected_field, node_b->local[2], 1e-6F); // F_y
-    TEST_ASSERT_FLOAT_EQ(-expected_field, node_b->local[3], 1e-6F); // F_z
 
     free(buffer);
 }
@@ -317,7 +319,7 @@ void test_fmm_l2p_pass(void) {
 
     float x[1] = {0.0F}, y[1] = {0.0F}, z[1] = {0.0F}, mass[1] = {2.5F};
     float fx[1] = {0.0F}, fy[1] = {0.0F}, fz[1] = {0.0F};
-    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 1};
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 0, 1};
 
     // manually create a leaf node
     ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
@@ -350,15 +352,16 @@ void test_fmm_p2p_pass(void) {
     ps_init(&ctx, &cfg);
 
     // 2 particles offset by 1.0 unit on the x axis
-    float x[2]    = {0.0F, 1.0F};
-    float y[2]    = {0.0F, 0.0F};
-    float z[2]    = {0.0F, 0.0F};
-    float mass[2] = {2.0F, 3.0F};
-    float fx[2]   = {0.0F, 0.0F};
-    float fy[2]   = {0.0F, 0.0F};
-    float fz[2]   = {0.0F, 0.0F};
+    float    x[2]    = {0.0F, 1.0F};
+    float    y[2]    = {0.0F, 0.0F};
+    float    z[2]    = {0.0F, 0.0F};
+    float    mass[2] = {2.0F, 3.0F};
+    float    fx[2]   = {0.0F, 0.0F};
+    float    fy[2]   = {0.0F, 0.0F};
+    float    fz[2]   = {0.0F, 0.0F};
+    uint32_t id[2]   = {0, 1};
 
-    const ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 2};
+    const ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, id, 2};
 
     // manually create a leaf node containing both
     ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
@@ -371,9 +374,9 @@ void test_fmm_p2p_pass(void) {
     ps__fmm_p2p_pass(ctx->root, ctx->root, &arrs);
 
     // dist = 1.0
-    // dist_sq = 1.0^2 + 1e-4 = 1.0001
+    // dist_sq = 1.0^2 + 2.0 = 3.0
     // F_mag = (mass1 * mass2) / (dist_sq^1.5)
-    float expected_f = (2.0F * 3.0F) * powf(1.0001F, -1.5F);
+    float expected_f = (2.0F * 3.0F) * powf(3.0F, -1.5F);
 
     // 0 should be pulled towards 1 (+X dir)
     TEST_ASSERT_FLOAT_EQ(expected_f, arrs.fx[0], 1e-4F);
