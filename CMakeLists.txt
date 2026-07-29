@@ -34,4 +34,21 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
 
     add_test(NAME core_tests COMMAND polesitter_tests)
+
+    add_executable(polesitter_benchmark tests/benchmark.c)
+    target_link_libraries(polesitter_benchmark PRIVATE polesitter)
+
+    if(NOT MSVC)
+        target_link_libraries(polesitter_benchmark PRIVATE m)
+    endif()
+
+    if(MSVC)
+        target_compile_options(polesitter_benchmark PRIVATE
+            /W4 /WX /O2
+        )
+    else()
+        target_compile_options(polesitter_benchmark PRIVATE
+            -Wall -Wextra -pedantic -O3 -ffast-math -march=native
+        )
+    endif()
 endif()
