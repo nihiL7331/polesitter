@@ -69,6 +69,34 @@ int main(void) {
 
 ```
 
+## Pipeline
+
+The most common N-body tree codes rely on the Barnes-Hut algorithm, ending up with O(N log N) time complexity. 
+It computes interactions between individual particles and distant cell multipoles (a Particle-to-Multipole approach).
+
+`polesitter` implements the Greengard-Rokhlin Fast Multipole Method, dropping the time complexity to O(N).
+It calculates interactions between cells and treats distant forces as a local background field.
+
+<p align="center">
+    <img src="docs/fmm_passes.svg" alt="FMM passes diagram" width="600" />
+</p>
+
+The solver executes physics ticks in four distinct passes over the Z-ordered octree:
+
+1. **Upward pass (P2M & M2M)**
+    - **Particle-to-Multipole:** Leaf nodes calculate their initial multipole expansion (total mass and cneter of mass) from their particles.
+    - **Multipole-to-Multipole:** These expansions are aggregated up the tree from the leaves to the root. Every node now represents the center of mass of all its children.
+
+2. **Interaction pass (M2L)**
+    - **Multipole-to-Local:** For every node, the solver finds well-separated neighbors (cells far enough away to be approximated). It takes their multipole expansions and translated them into a local expansion (a Taylor series approximation of the gravitional field entering the target cell).
+
+3. **Downward pass (L2L)**
+    - **Local-to-Local:** Starting from the root, local background fields are translated and pushed down to the children. By the time it reaches the leaf nodes, every leaf has a single local expansion representing the gravitational pull of the entire universe.
+
+4. **Evaluation pass (P2P & L2P)**
+    - **Local-to-Particle:** The accumulated local expansion at the leaf is evaluated and applied to the particle, adding the force of all distant bodies.
+    - **Particle-to-Particle:** Particles in adjacent, touching leaf nodes cannot be approximated, so they are evaluated using direct O(N^2) gravity.
+
 ## Benchmarks
 
 ![Linear Naive/FMM comparison graph.](/docs/performance_graph.png)
