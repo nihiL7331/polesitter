@@ -78,7 +78,7 @@ It computes interactions between individual particles and distant cell multipole
 It calculates interactions between cells and treats distant forces as a local background field.
 
 <p align="center">
-    <img src="docs/fmm_passes.svg" alt="FMM passes diagram" width="600" />
+    <img src="docs/diagram.svg" alt="FMM passes diagram" width="600" />
 </p>
 
 The solver executes physics ticks in four distinct passes over the Z-ordered octree:
