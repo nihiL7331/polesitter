@@ -31,6 +31,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(__AVX2__)
+#    include <immintrin.h>
+#    define PS_USE_AVX2
+#elif defined(__aarch64__) || defined(_M_ARM64)
+#    include <arm_neon.h>
+#    define PS_USE_NEON
+#else
+#    define PS_USE_SCALAR
+#endif
+
 // =====================================================================
 // public api
 // =====================================================================
@@ -522,10 +532,72 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
             const float* restrict sz = arrs->z;
             const float* restrict sm = arrs->mass;
 
-            for (uint32_t j = 0; j < src->particle_cnt; ++j) {
+            uint32_t j = 0;
+#if defined(PS_USE_AVX2)
+            __m256 t_x_vec = _mm256_set1_ps(t_x);
+            __m256 t_y_vec = _mm256_set1_ps(t_y);
+            __m256 t_z_vec = _mm256_set1_ps(t_z);
+            __m256 eps_vec = _mm256_set1_ps(0.1F);
+
+            // accumulators for target particles forces
+            __m256 f_x_vec = _mm256_setzero_ps();
+            __m256 f_y_vec = _mm256_setzero_ps();
+            __m256 f_z_vec = _mm256_setzero_ps();
+
+            // process in chunks of 8
+            for (; j + 7 < src->particle_cnt; j += 8) {
                 uint32_t s_idx = src->first_particle_idx + j;
 
-                float mask = (float)(t_idx != s_idx);
+                // load 8 source coordinates and masses
+                __m256 s_x_vec = _mm256_loadu_ps(&sx[s_idx]);
+                __m256 s_y_vec = _mm256_loadu_ps(&sy[s_idx]);
+                __m256 s_z_vec = _mm256_loadu_ps(&sz[s_idx]);
+                __m256 s_m_vec = _mm256_loadu_ps(&sm[s_idx]);
+
+                // calculate distance vectors
+                __m256 p_dx = _mm256_sub_ps(s_x_vec, t_x_vec);
+                __m256 p_dy = _mm256_sub_ps(s_y_vec, t_y_vec);
+                __m256 p_dz = _mm256_sub_ps(s_z_vec, t_z_vec);
+
+                // p_dist_sq = dx*dx + dy*dy + dz*dz + eps
+                __m256 dist_sq = _mm256_add_ps(
+                    _mm256_add_ps(_mm256_mul_ps(p_dx, p_dx),
+                                  _mm256_mul_ps(p_dy, p_dy)),
+                    _mm256_add_ps(_mm256_mul_ps(p_dz, p_dz), eps_vec));
+
+                // inv sqrt 1.0F / sqrt(dist_sq)
+                __m256 inv_dist = _mm256_rsqrt_ps(dist_sq);
+
+                // inv_dist3 = inv_dist^3
+                __m256 inv_dist3 =
+                    _mm256_mul_ps(_mm256_mul_ps(inv_dist, inv_dist), inv_dist);
+
+                // F_m = mass * inv_dist3
+                __m256 force = _mm256_mul_ps(s_m_vec, inv_dist3);
+
+                // accumulate force components
+                f_x_vec = _mm256_add_ps(f_x_vec, _mm256_mul_ps(p_dx, force));
+                f_y_vec = _mm256_add_ps(f_y_vec, _mm256_mul_ps(p_dy, force));
+                f_z_vec = _mm256_add_ps(f_z_vec, _mm256_mul_ps(p_dz, force));
+            }
+
+            // dump the 8 lanes back to memory and sum them up
+            float temp_fx[8], temp_fy[8], temp_fz[8];
+            _mm256_storeu_ps(temp_fx, f_x_vec);
+            _mm256_storeu_ps(temp_fy, f_y_vec);
+            _mm256_storeu_ps(temp_fz, f_z_vec);
+
+            for (int lane = 0; lane < 8; ++lane) {
+                f_x += temp_fx[lane];
+                f_y += temp_fy[lane];
+                f_z += temp_fz[lane];
+            }
+
+#endif
+            // fallback for the remainder (previous operations left n in mod 8
+            // particles)
+            for (; j < src->particle_cnt; ++j) {
+                uint32_t s_idx = src->first_particle_idx + j;
 
                 float p_dx = sx[s_idx] - t_x;
                 float p_dy = sy[s_idx] - t_y;
@@ -539,7 +611,7 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                 float inv_dist3 = inv_dist * inv_dist * inv_dist;
 
                 // gravity force magnitude
-                float force = sm[s_idx] * inv_dist3 * mask;
+                float force = sm[s_idx] * inv_dist3;
 
                 f_x += p_dx * force;
                 f_y += p_dy * force;
