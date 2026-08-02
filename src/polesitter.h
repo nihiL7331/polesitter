@@ -143,7 +143,7 @@ struct ps_context {
 // ---------------------------------------------------------------------
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
-static uint32_t ps__expand_bits(uint32_t v) {
+static uint32_t ps_impl_expand_bits(uint32_t v) {
     v &= 0x000003FF; // only look at 10 ls bits
 
     v = (v | (v << 16)) & 0x030000FF;
@@ -157,10 +157,10 @@ static uint32_t ps__expand_bits(uint32_t v) {
 // final number has 32 bits.
 // diving it by 3 dimensions, we can store 10 bits per dimension.
 // it interleaves the expanded bits of x, y and z.
-static uint32_t ps__morton_encode(uint32_t x, uint32_t y, uint32_t z) {
-    uint32_t xx = ps__expand_bits(x);
-    uint32_t yy = ps__expand_bits(y);
-    uint32_t zz = ps__expand_bits(z);
+static uint32_t ps_impl_morton_encode(uint32_t x, uint32_t y, uint32_t z) {
+    uint32_t xx = ps_impl_expand_bits(x);
+    uint32_t yy = ps_impl_expand_bits(y);
+    uint32_t zz = ps_impl_expand_bits(z);
 
     // x takes bit 0, y shifts to bit 1, z shifts to bit 2
     return xx | (yy << 1) | (zz << 2);
@@ -209,7 +209,7 @@ static void ps_arena_clear(ps_arena_t* arena) {
     10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
 
 // zero out a newly allocated node
-static void ps__node_init(ps_node_t* node) {
+static void ps_impl_node_init(ps_node_t* node) {
     node->x          = 0.0F;
     node->y          = 0.0F;
     node->z          = 0.0F;
@@ -230,9 +230,9 @@ static void ps__node_init(ps_node_t* node) {
 }
 
 // walk the morton code and build the tree branches
-static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
-                                   uint32_t morton_code,
-                                   uint32_t particle_idx) {
+static ps_result_t ps_impl_tree_insert(ps_arena_t* arena, ps_node_t* root,
+                                       uint32_t morton_code,
+                                       uint32_t particle_idx) {
     if (!root) {
         return PS_EINVAL;
     }
@@ -262,7 +262,7 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
                 return PS_EOOM;
             }
 
-            ps__node_init(new_node);
+            ps_impl_node_init(new_node);
 
             new_node->x          = curr_x;
             new_node->y          = curr_y;
@@ -288,8 +288,8 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
 
 // pass 1
 // p2m (leaves) and m2m (parents) in post-order traversal
-static void ps__fmm_upward_pass(ps_node_t*                node,
-                                const ps_particle_arrs_t* arrs) {
+static void ps_impl_fmm_upward_pass(ps_node_t*                node,
+                                    const ps_particle_arrs_t* arrs) {
     if (!node) {
         return;
     }
@@ -334,7 +334,7 @@ static void ps__fmm_upward_pass(ps_node_t*                node,
         ps_node_t* child = node->children[i];
         if (child) {
             // calc the children first
-            ps__fmm_upward_pass(child, arrs);
+            ps_impl_fmm_upward_pass(child, arrs);
 
             // dist vector from the child's center
             // up to the parent's center
@@ -365,7 +365,7 @@ static void ps__fmm_upward_pass(ps_node_t*                node,
 
 // pass 2
 // m2l dual-tree traversal to find well-separated nodes and translate expansions
-static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
+static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
     if (!target || !src) {
         return;
     }
@@ -422,12 +422,12 @@ static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
     if (target->is_leaf) {
         // target is as small as possible, open the src
         for (int i = 0; i < 8; ++i) {
-            ps__fmm_interaction_pass(target, src->children[i]);
+            ps_impl_fmm_interaction_pass(target, src->children[i]);
         }
     } else if (src->is_leaf) {
         // src is as small as possible, open the target
         for (int i = 0; i < 8; ++i) {
-            ps__fmm_interaction_pass(target->children[i], src);
+            ps_impl_fmm_interaction_pass(target->children[i], src);
         }
     } else {
         // subdivide both and pair all 64 permutations
@@ -441,7 +441,8 @@ static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
                     continue;
                 }
 
-                ps__fmm_interaction_pass(target->children[i], src->children[j]);
+                ps_impl_fmm_interaction_pass(target->children[i],
+                                             src->children[j]);
             }
         }
     }
@@ -450,7 +451,7 @@ static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
 // pass 3
 // l2l, pushes the accumulated background field from parents down to their
 // children
-static void ps__fmm_downward_pass(ps_node_t* node) {
+static void ps_impl_fmm_downward_pass(ps_node_t* node) {
     if (!node || node->is_leaf) {
         return;
     }
@@ -464,14 +465,15 @@ static void ps__fmm_downward_pass(ps_node_t* node) {
             child->local[2] += node->local[2];
             child->local[3] += node->local[3];
 
-            ps__fmm_downward_pass(child);
+            ps_impl_fmm_downward_pass(child);
         }
     }
 }
 
 // pass 4
 // l2p, applies the accumulated bg field to the particles inside the leaf
-static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
+static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
+                                 const ps_particle_arrs_t* arrs) {
     if (!node) {
         return;
     }
@@ -529,14 +531,14 @@ static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
 
     // cascade
     for (int i = 0; i < 8; ++i) {
-        ps__fmm_l2p_pass(node->children[i], arrs);
+        ps_impl_fmm_l2p_pass(node->children[i], arrs);
     }
 }
 
 // pass 5
 // p2p, dual-tree traversal to calc N-body forces for near-field neighbors
-static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
-                             const ps_particle_arrs_t* arrs) {
+static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
+                                 const ps_particle_arrs_t* arrs) {
     if (!target || !src) {
         return;
     }
@@ -734,11 +736,11 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
     // otherwise subdivide and recurse (like in m2l)
     if (target->is_leaf) {
         for (int i = 0; i < 8; ++i) {
-            ps__fmm_p2p_pass(target, src->children[i], arrs);
+            ps_impl_fmm_p2p_pass(target, src->children[i], arrs);
         }
     } else if (src->is_leaf) {
         for (int i = 0; i < 8; ++i) {
-            ps__fmm_p2p_pass(target->children[i], src, arrs);
+            ps_impl_fmm_p2p_pass(target->children[i], src, arrs);
         }
     } else {
         for (int i = 0; i < 8; ++i) {
@@ -751,21 +753,23 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                     continue;
                 }
 
-                ps__fmm_p2p_pass(target->children[i], src->children[j], arrs);
+                ps_impl_fmm_p2p_pass(target->children[i], src->children[j],
+                                     arrs);
             }
         }
     }
 }
 
-#define PS__SWAP_PTR(type, a, b)                                               \
+#define PS_IMPL_SWAP_PTR(type, a, b)                                           \
     do {                                                                       \
         type tmp = a;                                                          \
         (a)      = b;                                                          \
         (b)      = tmp;                                                        \
     } while (0)
 
-static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
-                                      const ps_particle_arrs_t* arrs) {
+static ps_result_t ps_impl_sort_particles(ps_arena_t* arena,
+                                          uint32_t*   morton_codes,
+                                          const ps_particle_arrs_t* arrs) {
     size_t cnt = arrs->cnt;
     if (cnt == 0) {
         return PS_OK;
@@ -833,12 +837,12 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
         }
 
         // pingpong pointers for next pass
-        PS__SWAP_PTR(uint32_t*, m_src, m_dst);
-        PS__SWAP_PTR(uint32_t*, id_src, id_dst);
-        PS__SWAP_PTR(float*, x_src, x_dst);
-        PS__SWAP_PTR(float*, y_src, y_dst);
-        PS__SWAP_PTR(float*, z_src, z_dst);
-        PS__SWAP_PTR(float*, mass_src, mass_dst);
+        PS_IMPL_SWAP_PTR(uint32_t*, m_src, m_dst);
+        PS_IMPL_SWAP_PTR(uint32_t*, id_src, id_dst);
+        PS_IMPL_SWAP_PTR(float*, x_src, x_dst);
+        PS_IMPL_SWAP_PTR(float*, y_src, y_dst);
+        PS_IMPL_SWAP_PTR(float*, z_src, z_dst);
+        PS_IMPL_SWAP_PTR(float*, mass_src, mass_dst);
     }
 
     // reclaim memory
@@ -884,7 +888,7 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     ps_arena_clear(&ctx->arena);
 
     // sort the arrays based on morton_codes as keys
-    ps__sort_particles(&ctx->arena, morton_codes, arrs);
+    ps_impl_sort_particles(&ctx->arena, morton_codes, arrs);
 
     // allocate the root node
     ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 32);
@@ -892,7 +896,7 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
         return PS_EOOM;
     }
 
-    ps__node_init(ctx->root);
+    ps_impl_node_init(ctx->root);
 
     // seed geometry
     ctx->root->x          = root_cx;
@@ -902,7 +906,8 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
 
     // build the octree
     for (size_t i = 0; i < arrs->cnt; ++i) {
-        ps__tree_insert(&ctx->arena, ctx->root, morton_codes[i], (uint32_t)i);
+        ps_impl_tree_insert(&ctx->arena, ctx->root, morton_codes[i],
+                            (uint32_t)i);
 
         arrs->fx[i] = 0.0F;
         arrs->fy[i] = 0.0F;
@@ -910,17 +915,17 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     }
 
     // upward pass (p2m -> m2m)
-    ps__fmm_upward_pass(ctx->root, arrs);
+    ps_impl_fmm_upward_pass(ctx->root, arrs);
 
     // interaction pass (m2l)
-    ps__fmm_interaction_pass(ctx->root, ctx->root);
+    ps_impl_fmm_interaction_pass(ctx->root, ctx->root);
 
     // downward pass (l2l)
-    ps__fmm_downward_pass(ctx->root);
+    ps_impl_fmm_downward_pass(ctx->root);
 
     // evaluation pass (l2p->p2p)
-    ps__fmm_l2p_pass(ctx->root, arrs);
-    ps__fmm_p2p_pass(ctx->root, ctx->root, arrs);
+    ps_impl_fmm_l2p_pass(ctx->root, arrs);
+    ps_impl_fmm_p2p_pass(ctx->root, ctx->root, arrs);
 
     return PS_OK;
 }
@@ -1086,7 +1091,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
             mz = 1023;
         }
 
-        out_morton_codes[i] = ps__morton_encode(mx, my, mz);
+        out_morton_codes[i] = ps_impl_morton_encode(mx, my, mz);
     }
 
     if (out_min_b) {
