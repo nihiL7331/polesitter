@@ -549,10 +549,10 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                 uint32_t s_idx = src->first_particle_idx + j;
 
                 // load 8 source coordinates and masses
-                __m256 s_x_vec = _mm256_loadu_ps(&sx[s_idx]);
-                __m256 s_y_vec = _mm256_loadu_ps(&sy[s_idx]);
-                __m256 s_z_vec = _mm256_loadu_ps(&sz[s_idx]);
-                __m256 s_m_vec = _mm256_loadu_ps(&sm[s_idx]);
+                __m256 s_x_vec = _mm256_load_ps(&sx[s_idx]);
+                __m256 s_y_vec = _mm256_load_ps(&sy[s_idx]);
+                __m256 s_z_vec = _mm256_load_ps(&sz[s_idx]);
+                __m256 s_m_vec = _mm256_load_ps(&sm[s_idx]);
 
                 // calculate distance vectors
                 __m256 p_dx = _mm256_sub_ps(s_x_vec, t_x_vec);
