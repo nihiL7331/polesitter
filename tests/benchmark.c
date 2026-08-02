@@ -1,10 +1,21 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
+
+#if defined(_MSC_VER)
+#    include <malloc.h>
+#    define ALIGNED_MALLOC(size, align) _aligned_malloc((size), (align))
+#    define ALIGNED_FREE(ptr)           _aligned_free((ptr))
+#else
+#    include <mm_malloc.h>
+#    define ALIGNED_MALLOC(size, align) _mm_malloc((size), (align))
+#    define ALIGNED_FREE(ptr)           _mm_free((ptr))
+#endif
 
 #define ARENA_SIZE (1024ULL * 1024ULL * 128ULL)
 
@@ -61,15 +72,18 @@ int main(void) {
     for (int t = 0; t < num_tests; ++t) {
         int count = test_sizes[t];
 
-        float*    px           = malloc(count * sizeof(float));
-        float*    py           = malloc(count * sizeof(float));
-        float*    pz           = malloc(count * sizeof(float));
-        float*    mass         = malloc(count * sizeof(float));
-        float*    fx           = calloc(count, sizeof(float));
-        float*    fy           = calloc(count, sizeof(float));
-        float*    fz           = calloc(count, sizeof(float));
-        uint32_t* id           = malloc(count * sizeof(uint32_t));
-        uint32_t* morton_codes = malloc(count * sizeof(uint32_t));
+        float*    px           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    py           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    pz           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    mass         = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    fx           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    fy           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    fz           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        uint32_t* id           = ALIGNED_MALLOC(count * sizeof(uint32_t), 32);
+        uint32_t* morton_codes = ALIGNED_MALLOC(count * sizeof(uint32_t), 32);
+        memset(fx, 0, count * sizeof(float));
+        memset(fy, 0, count * sizeof(float));
+        memset(fz, 0, count * sizeof(float));
 
         srand(7331);
         for (int i = 0; i < count; i++) {
@@ -114,16 +128,16 @@ int main(void) {
 
         printf("%d,%f,%f\n", count, time_direct, time_fmm);
 
-        free(buffer);
-        free(px);
-        free(py);
-        free(pz);
-        free(mass);
-        free(fx);
-        free(fy);
-        free(fz);
-        free(id);
-        free(morton_codes);
+        ALIGNED_FREE(buffer);
+        ALIGNED_FREE(px);
+        ALIGNED_FREE(py);
+        ALIGNED_FREE(pz);
+        ALIGNED_FREE(mass);
+        ALIGNED_FREE(fx);
+        ALIGNED_FREE(fy);
+        ALIGNED_FREE(fz);
+        ALIGNED_FREE(id);
+        ALIGNED_FREE(morton_codes);
     }
 
     return 0;

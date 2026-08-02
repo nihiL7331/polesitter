@@ -35,22 +35,22 @@ void test_morton_encoding(void) {
 
     // x = 1 (001)
     // should land at bit 0 -> 0001
-    TEST_ASSERT(ps__morton_encode(1, 0, 0) == 1 /* 0b0001 */,
+    TEST_ASSERT(ps_impl_morton_encode(1, 0, 0) == 1 /* 0b0001 */,
                 "Morton code for x=1 failed");
 
     // y = 1 (001)
     // should land at bit 1 -> 0010
-    TEST_ASSERT(ps__morton_encode(0, 1, 0) == 2 /* 0b0010 */,
+    TEST_ASSERT(ps_impl_morton_encode(0, 1, 0) == 2 /* 0b0010 */,
                 "Morton code for y=1 failed");
 
     // z = 1 (001)
     // should land at bit 2 -> 0100
-    TEST_ASSERT(ps__morton_encode(0, 0, 1) == 4 /* 0b0100 */,
+    TEST_ASSERT(ps_impl_morton_encode(0, 0, 1) == 4 /* 0b0100 */,
                 "Morton code for z=1 failed");
 
     // x = 3 (011)
     // should land at bits 0 and 3 -> 1001
-    TEST_ASSERT(ps__morton_encode(3, 0, 0) == 9 /* 0b1001 */,
+    TEST_ASSERT(ps_impl_morton_encode(3, 0, 0) == 9 /* 0b1001 */,
                 "Morton code for x=3 failed");
 }
 
@@ -110,11 +110,11 @@ void test_octree_insertion(void) {
     // alloc the root node directly from arena
     ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
     TEST_ASSERT(ctx->root != NULL, "Failed to allocate root node");
-    ps__node_init(ctx->root);
+    ps_impl_node_init(ctx->root);
 
     // morton code is 0, tree should traverse down children[0] at every level
-    uint32_t morton_zero = ps__morton_encode(0, 0, 0);
-    res = ps__tree_insert(&ctx->arena, ctx->root, morton_zero, 42);
+    uint32_t morton_zero = ps_impl_morton_encode(0, 0, 0);
+    res = ps_impl_tree_insert(&ctx->arena, ctx->root, morton_zero, 42);
     TEST_ASSERT(res == PS_OK, "Failed to insert origin particle");
 
     ps_node_t* curr = ctx->root;
@@ -128,8 +128,8 @@ void test_octree_insertion(void) {
                 "Leaf stored wrong particle idx");
 
     // maximum bounds test, tree should traverse down children[7] at every level
-    uint32_t morton_max = ps__morton_encode(1023, 1023, 1023);
-    res = ps__tree_insert(&ctx->arena, ctx->root, morton_max, 99);
+    uint32_t morton_max = ps_impl_morton_encode(1023, 1023, 1023);
+    res = ps_impl_tree_insert(&ctx->arena, ctx->root, morton_max, 99);
     TEST_ASSERT(res == PS_OK, "Failed to insert max bounds particle");
 
     curr = ctx->root;
@@ -164,7 +164,7 @@ void test_radix_sort(void) {
 
     ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 0, 4};
 
-    ps__sort_particles(&ctx->arena, morton_codes, &arrs);
+    ps_impl_sort_particles(&ctx->arena, morton_codes, &arrs);
 
     // verify morton codes are strictly ascending
     TEST_ASSERT(morton_codes[0] == 10, "Sort failed at idx 0");
@@ -199,7 +199,7 @@ void test_fmm_upward_pass(void) {
     ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, id, 2};
 
     ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps__node_init(ctx->root);
+    ps_impl_node_init(ctx->root);
     ctx->root->is_leaf            = 1;
     ctx->root->particle_cnt       = 2;
     ctx->root->first_particle_idx = 0;
@@ -207,7 +207,7 @@ void test_fmm_upward_pass(void) {
     ctx->root->y                  = 0.0F;
     ctx->root->z                  = 0.0F;
 
-    ps__fmm_upward_pass(ctx->root, &arrs);
+    ps_impl_fmm_upward_pass(ctx->root, &arrs);
 
     // M0 = sum(mass) = 2.0 + 3.0 = 5.0
     // MX = sum(mass * (x - root_x)) = 2.0*2.0 + 3.0*-1.0 = 1.0
@@ -237,8 +237,8 @@ void test_fmm_interaction_pass(void) {
         (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
     ps_node_t* node_b =
         (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps__node_init(node_a);
-    ps__node_init(node_b);
+    ps_impl_node_init(node_a);
+    ps_impl_node_init(node_b);
 
     node_a->x          = -5.0F;
     node_a->y          = -5.0F;
@@ -252,7 +252,7 @@ void test_fmm_interaction_pass(void) {
 
     node_b->multipole[0] = 1.0F;
 
-    ps__fmm_interaction_pass(node_a, node_b);
+    ps_impl_fmm_interaction_pass(node_a, node_b);
 
     // vector from A to B: dx=10, dy=10, dz=10
     // dist_sq = 300, dist = sqrt(300) ~= 17.32
@@ -278,19 +278,19 @@ void test_fmm_downward_pass(void) {
 
     // manually allocate and send the root
     ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps__node_init(ctx->root);
+    ps_impl_node_init(ctx->root);
     ctx->root->half_width = 10.0F;
 
     // insert a single particle to create a deep branch
-    uint32_t morton_max = ps__morton_encode(1023, 1023, 1023);
-    ps__tree_insert(&ctx->arena, ctx->root, morton_max, 42);
+    uint32_t morton_max = ps_impl_morton_encode(1023, 1023, 1023);
+    ps_impl_tree_insert(&ctx->arena, ctx->root, morton_max, 42);
 
     // inject a bg field at the root node
     ctx->root->local[1] = 5.0F;  // F_x
     ctx->root->local[2] = -3.5F; // F_y
     ctx->root->local[3] = 42.0F; // F_z
 
-    ps__fmm_downward_pass(ctx->root);
+    ps_impl_fmm_downward_pass(ctx->root);
 
     // traverse to the bottom leaf node
     ps_node_t* curr = ctx->root;
@@ -323,7 +323,7 @@ void test_fmm_l2p_pass(void) {
 
     // manually create a leaf node
     ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps__node_init(ctx->root);
+    ps_impl_node_init(ctx->root);
     ctx->root->is_leaf            = 1;
     ctx->root->particle_cnt       = 1;
     ctx->root->first_particle_idx = 0;
@@ -333,7 +333,7 @@ void test_fmm_l2p_pass(void) {
     ctx->root->local[2] = -1.0F;
     ctx->root->local[3] = 4.0F;
 
-    ps__fmm_l2p_pass(ctx->root, &arrs);
+    ps_impl_fmm_l2p_pass(ctx->root, &arrs);
 
     // check F = m * a
     TEST_ASSERT_FLOAT_EQ(5.0F, arrs.fx[0], 1e-6F);  // 2.5 * 2.0
@@ -365,13 +365,13 @@ void test_fmm_p2p_pass(void) {
 
     // manually create a leaf node containing both
     ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps__node_init(ctx->root);
+    ps_impl_node_init(ctx->root);
     ctx->root->is_leaf            = 1;
     ctx->root->particle_cnt       = 2;
     ctx->root->first_particle_idx = 0;
     ctx->root->half_width         = 10.0F; // not well-separated
 
-    ps__fmm_p2p_pass(ctx->root, ctx->root, &arrs);
+    ps_impl_fmm_p2p_pass(ctx->root, ctx->root, &arrs);
 
     // dist = 1.0
     // dist_sq = 1.0^2 + 2.0 = 3.0

@@ -31,6 +31,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(__AVX2__)
+#    include <immintrin.h>
+#    define PS_USE_AVX2
+#elif defined(__aarch64__) || defined(_M_ARM64)
+#    include <arm_neon.h>
+#    define PS_USE_NEON
+#else
+#    define PS_USE_SCALAR
+#endif
+
+#ifndef PS_RESTRICT
+#    if defined(__cplusplus) || defined(_MSC_VER)
+#        define PS_RESTRICT __restrict
+#    else
+#        define PS_RESTRICT restrict
+#    endif
+#endif
+
 // =====================================================================
 // public api
 // =====================================================================
@@ -125,7 +143,7 @@ struct ps_context {
 // ---------------------------------------------------------------------
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
-static uint32_t ps__expand_bits(uint32_t v) {
+static uint32_t ps_impl_expand_bits(uint32_t v) {
     v &= 0x000003FF; // only look at 10 ls bits
 
     v = (v | (v << 16)) & 0x030000FF;
@@ -139,10 +157,10 @@ static uint32_t ps__expand_bits(uint32_t v) {
 // final number has 32 bits.
 // diving it by 3 dimensions, we can store 10 bits per dimension.
 // it interleaves the expanded bits of x, y and z.
-static uint32_t ps__morton_encode(uint32_t x, uint32_t y, uint32_t z) {
-    uint32_t xx = ps__expand_bits(x);
-    uint32_t yy = ps__expand_bits(y);
-    uint32_t zz = ps__expand_bits(z);
+static uint32_t ps_impl_morton_encode(uint32_t x, uint32_t y, uint32_t z) {
+    uint32_t xx = ps_impl_expand_bits(x);
+    uint32_t yy = ps_impl_expand_bits(y);
+    uint32_t zz = ps_impl_expand_bits(z);
 
     // x takes bit 0, y shifts to bit 1, z shifts to bit 2
     return xx | (yy << 1) | (zz << 2);
@@ -191,7 +209,7 @@ static void ps_arena_clear(ps_arena_t* arena) {
     10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
 
 // zero out a newly allocated node
-static void ps__node_init(ps_node_t* node) {
+static void ps_impl_node_init(ps_node_t* node) {
     node->x          = 0.0F;
     node->y          = 0.0F;
     node->z          = 0.0F;
@@ -212,9 +230,9 @@ static void ps__node_init(ps_node_t* node) {
 }
 
 // walk the morton code and build the tree branches
-static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
-                                   uint32_t morton_code,
-                                   uint32_t particle_idx) {
+static ps_result_t ps_impl_tree_insert(ps_arena_t* arena, ps_node_t* root,
+                                       uint32_t morton_code,
+                                       uint32_t particle_idx) {
     if (!root) {
         return PS_EINVAL;
     }
@@ -239,12 +257,12 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
 
         if (!curr->children[octant]) {
             ps_node_t* new_node =
-                (ps_node_t*)ps_arena_alloc(arena, sizeof(ps_node_t), 16);
+                (ps_node_t*)ps_arena_alloc(arena, sizeof(ps_node_t), 32);
             if (!new_node) {
                 return PS_EOOM;
             }
 
-            ps__node_init(new_node);
+            ps_impl_node_init(new_node);
 
             new_node->x          = curr_x;
             new_node->y          = curr_y;
@@ -270,8 +288,8 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
 
 // pass 1
 // p2m (leaves) and m2m (parents) in post-order traversal
-static void ps__fmm_upward_pass(ps_node_t*                node,
-                                const ps_particle_arrs_t* arrs) {
+static void ps_impl_fmm_upward_pass(ps_node_t*                node,
+                                    const ps_particle_arrs_t* arrs) {
     if (!node) {
         return;
     }
@@ -316,7 +334,7 @@ static void ps__fmm_upward_pass(ps_node_t*                node,
         ps_node_t* child = node->children[i];
         if (child) {
             // calc the children first
-            ps__fmm_upward_pass(child, arrs);
+            ps_impl_fmm_upward_pass(child, arrs);
 
             // dist vector from the child's center
             // up to the parent's center
@@ -347,7 +365,7 @@ static void ps__fmm_upward_pass(ps_node_t*                node,
 
 // pass 2
 // m2l dual-tree traversal to find well-separated nodes and translate expansions
-static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
+static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
     if (!target || !src) {
         return;
     }
@@ -404,12 +422,12 @@ static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
     if (target->is_leaf) {
         // target is as small as possible, open the src
         for (int i = 0; i < 8; ++i) {
-            ps__fmm_interaction_pass(target, src->children[i]);
+            ps_impl_fmm_interaction_pass(target, src->children[i]);
         }
     } else if (src->is_leaf) {
         // src is as small as possible, open the target
         for (int i = 0; i < 8; ++i) {
-            ps__fmm_interaction_pass(target->children[i], src);
+            ps_impl_fmm_interaction_pass(target->children[i], src);
         }
     } else {
         // subdivide both and pair all 64 permutations
@@ -423,7 +441,8 @@ static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
                     continue;
                 }
 
-                ps__fmm_interaction_pass(target->children[i], src->children[j]);
+                ps_impl_fmm_interaction_pass(target->children[i],
+                                             src->children[j]);
             }
         }
     }
@@ -432,7 +451,7 @@ static void ps__fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
 // pass 3
 // l2l, pushes the accumulated background field from parents down to their
 // children
-static void ps__fmm_downward_pass(ps_node_t* node) {
+static void ps_impl_fmm_downward_pass(ps_node_t* node) {
     if (!node || node->is_leaf) {
         return;
     }
@@ -446,14 +465,15 @@ static void ps__fmm_downward_pass(ps_node_t* node) {
             child->local[2] += node->local[2];
             child->local[3] += node->local[3];
 
-            ps__fmm_downward_pass(child);
+            ps_impl_fmm_downward_pass(child);
         }
     }
 }
 
 // pass 4
 // l2p, applies the accumulated bg field to the particles inside the leaf
-static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
+static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
+                                 const ps_particle_arrs_t* arrs) {
     if (!node) {
         return;
     }
@@ -463,7 +483,68 @@ static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
         float field_y = node->local[2];
         float field_z = node->local[3];
 
-        for (uint32_t i = 0; i < node->particle_cnt; ++i) {
+        uint32_t i = 0;
+
+#if defined(PS_USE_AVX2)
+        // broadcast local bg field to all 8 lanes
+        __m256 f_x_vec = _mm256_set1_ps(field_x);
+        __m256 f_y_vec = _mm256_set1_ps(field_y);
+        __m256 f_z_vec = _mm256_set1_ps(field_z);
+
+        // process in chunks of 8
+        for (; i + 7 < node->particle_cnt; i += 8) {
+            uint32_t idx = node->first_particle_idx + i;
+
+            // load 8 masses
+            __m256 m_vec = _mm256_loadu_ps(&arrs->mass[idx]);
+
+            // load 8 current forces
+            __m256 cur_fx = _mm256_loadu_ps(&arrs->fx[idx]);
+            __m256 cur_fy = _mm256_loadu_ps(&arrs->fy[idx]);
+            __m256 cur_fz = _mm256_loadu_ps(&arrs->fz[idx]);
+
+            // F_xyz += mass * field_xyz
+            cur_fx = _mm256_add_ps(cur_fx, _mm256_mul_ps(m_vec, f_x_vec));
+            cur_fy = _mm256_add_ps(cur_fy, _mm256_mul_ps(m_vec, f_y_vec));
+            cur_fz = _mm256_add_ps(cur_fz, _mm256_mul_ps(m_vec, f_z_vec));
+
+            // store 8 updated forces back to mem
+            _mm256_store_ps(&arrs->fx[idx], cur_fx);
+            _mm256_store_ps(&arrs->fy[idx], cur_fy);
+            _mm256_store_ps(&arrs->fz[idx], cur_fz);
+        }
+#elif defined(PS_USE_NEON)
+        // broadcast local bg field to all 4 lanes
+        float32x4_t f_x_vec = vdupq_n_f32(field_x);
+        float32x4_t f_y_vec = vdupq_n_f32(field_y);
+        float32x4_t f_z_vec = vdupq_n_f32(field_z);
+
+        // process in chunks of 4
+        for (; i + 3 < node->particle_cnt; i += 4) {
+            uint32_t idx = node->first_particle_idx + i;
+
+            // load 4 masses
+            float32x4_t m_vec = vld1q_f32(&arrs->mass[idx]);
+
+            // load 4 current forces
+            float32x4_t cur_fx = vld1q_f32(&arrs->fx[idx]);
+            float32x4_t cur_fy = vld1q_f32(&arrs->fy[idx]);
+            float32x4_t cur_fz = vld1q_f32(&arrs->fz[idx]);
+
+            // F_xyz += mass * field_xyz
+            cur_fx = vmlaq_f32(cur_fx, m_vec, f_x_vec);
+            cur_fy = vmlaq_f32(cur_fy, m_vec, f_y_vec);
+            cur_fz = vmlaq_f32(cur_fz, m_vec, f_z_vec);
+
+            // store 4 updated forces back to mem
+            vst1q_f32(&arrs->fx[idx], cur_fx);
+            vst1q_f32(&arrs->fy[idx], cur_fy);
+            vst1q_f32(&arrs->fz[idx], cur_fz);
+        }
+#endif
+
+        // fallback for the remainder
+        for (; i < node->particle_cnt; ++i) {
             uint32_t idx  = node->first_particle_idx + i;
             float    mass = arrs->mass[idx];
 
@@ -478,14 +559,14 @@ static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
 
     // cascade
     for (int i = 0; i < 8; ++i) {
-        ps__fmm_l2p_pass(node->children[i], arrs);
+        ps_impl_fmm_l2p_pass(node->children[i], arrs);
     }
 }
 
 // pass 5
 // p2p, dual-tree traversal to calc N-body forces for near-field neighbors
-static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
-                             const ps_particle_arrs_t* arrs) {
+static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
+                                 const ps_particle_arrs_t* arrs) {
     if (!target || !src) {
         return;
     }
@@ -517,15 +598,141 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
             float f_y = 0.0F;
             float f_z = 0.0F;
 
-            const float* restrict sx = arrs->x;
-            const float* restrict sy = arrs->y;
-            const float* restrict sz = arrs->z;
-            const float* restrict sm = arrs->mass;
+            const float* PS_RESTRICT sx = arrs->x;
+            const float* PS_RESTRICT sy = arrs->y;
+            const float* PS_RESTRICT sz = arrs->z;
+            const float* PS_RESTRICT sm = arrs->mass;
 
-            for (uint32_t j = 0; j < src->particle_cnt; ++j) {
+            uint32_t j = 0;
+#if defined(PS_USE_AVX2)
+            // broadcast target coords and soft param
+            __m256 t_x_vec = _mm256_set1_ps(t_x);
+            __m256 t_y_vec = _mm256_set1_ps(t_y);
+            __m256 t_z_vec = _mm256_set1_ps(t_z);
+            __m256 eps_vec = _mm256_set1_ps(0.1F);
+
+            // accumulators for target particles forces
+            __m256 f_x_vec = _mm256_setzero_ps();
+            __m256 f_y_vec = _mm256_setzero_ps();
+            __m256 f_z_vec = _mm256_setzero_ps();
+
+            // process in chunks of 8
+            for (; j + 7 < src->particle_cnt; j += 8) {
                 uint32_t s_idx = src->first_particle_idx + j;
 
-                float mask = (float)(t_idx != s_idx);
+                // load 8 source coordinates and masses
+                __m256 s_x_vec = _mm256_loadu_ps(&sx[s_idx]);
+                __m256 s_y_vec = _mm256_loadu_ps(&sy[s_idx]);
+                __m256 s_z_vec = _mm256_loadu_ps(&sz[s_idx]);
+                __m256 s_m_vec = _mm256_loadu_ps(&sm[s_idx]);
+
+                // calculate distance vectors
+                __m256 p_dx = _mm256_sub_ps(s_x_vec, t_x_vec);
+                __m256 p_dy = _mm256_sub_ps(s_y_vec, t_y_vec);
+                __m256 p_dz = _mm256_sub_ps(s_z_vec, t_z_vec);
+
+                // p_dist_sq = dx*dx + dy*dy + dz*dz + eps
+                __m256 dist_sq = _mm256_add_ps(
+                    _mm256_add_ps(_mm256_mul_ps(p_dx, p_dx),
+                                  _mm256_mul_ps(p_dy, p_dy)),
+                    _mm256_add_ps(_mm256_mul_ps(p_dz, p_dz), eps_vec));
+
+                // inv sqrt 1.0F / sqrt(dist_sq)
+                __m256 inv_dist = _mm256_rsqrt_ps(dist_sq);
+
+                // inv_dist3 = inv_dist^3
+                __m256 inv_dist3 =
+                    _mm256_mul_ps(_mm256_mul_ps(inv_dist, inv_dist), inv_dist);
+
+                // F_m = mass * inv_dist3
+                __m256 force = _mm256_mul_ps(s_m_vec, inv_dist3);
+
+                // accumulate force components
+                f_x_vec = _mm256_add_ps(f_x_vec, _mm256_mul_ps(p_dx, force));
+                f_y_vec = _mm256_add_ps(f_y_vec, _mm256_mul_ps(p_dy, force));
+                f_z_vec = _mm256_add_ps(f_z_vec, _mm256_mul_ps(p_dz, force));
+            }
+
+            // dump the 8 lanes back to memory and sum them up
+            float temp_fx[8], temp_fy[8], temp_fz[8];
+            _mm256_storeu_ps(temp_fx, f_x_vec);
+            _mm256_storeu_ps(temp_fy, f_y_vec);
+            _mm256_storeu_ps(temp_fz, f_z_vec);
+
+            for (int lane = 0; lane < 8; ++lane) {
+                f_x += temp_fx[lane];
+                f_y += temp_fy[lane];
+                f_z += temp_fz[lane];
+            }
+
+#elif defined(PS_USE_NEON)
+            // broadcast target coords and soft param
+            float32x4_t t_x_vec = vdupq_n_f32(t_x);
+            float32x4_t t_y_vec = vdupq_n_f32(t_y);
+            float32x4_t t_z_vec = vdupq_n_f32(t_z);
+            float32x4_t eps_vec = vdupq_n_f32(2.0F);
+
+            // accumulators for target particles forces
+            float32x4_t f_x_vec = vdupq_n_f32(0.0F);
+            float32x4_t f_y_vec = vdupq_n_f32(0.0F);
+            float32x4_t f_z_vec = vdupq_n_f32(0.0F);
+
+            // process in chunks of 4
+            for (; j + 3 < src->particle_cnt; j += 4) {
+                uint32_t s_idx = src->first_particle_idx + j;
+
+                // load 4 source coordinates and masses
+                float32x4_t s_x_vec = vld1q_f32(&sx[s_idx]);
+                float32x4_t s_y_vec = vld1q_f32(&sy[s_idx]);
+                float32x4_t s_z_vec = vld1q_f32(&sz[s_idx]);
+                float32x4_t s_m_vec = vld1q_f32(&sm[s_idx]);
+
+                // calculate distance vectors
+                float32x4_t p_dx = vsubq_f32(s_x_vec, t_x_vec);
+                float32x4_t p_dy = vsubq_f32(s_y_vec, t_y_vec);
+                float32x4_t p_dz = vsubq_f32(s_z_vec, t_z_vec);
+
+                // p_dist_sq = dx*dx + dy*dy + dz*dz + eps
+                float32x4_t dist_sq = vmlaq_f32(eps_vec, p_dx, p_dx);
+                dist_sq             = vmlaq_f32(dist_sq, p_dy, p_dy);
+                dist_sq             = vmlaq_f32(dist_sq, p_dz, p_dz);
+
+                // inv sqrt 1.0F / sqrt(dist_sq)
+                // estimate + newton iteration
+                float32x4_t inv_dist_est = vrsqrteq_f32(dist_sq);
+                float32x4_t nr_step      = vrsqrtsq_f32(
+                    dist_sq, vmulq_f32(inv_dist_est, inv_dist_est));
+                float32x4_t inv_dist = vmulq_f32(inv_dist_est, nr_step);
+
+                // inv_dist3 = inv_dist^3
+                float32x4_t inv_dist3 =
+                    vmulq_f32(inv_dist, vmulq_f32(inv_dist, inv_dist));
+
+                // F_m = mass * inv_dist3
+                float32x4_t force = vmulq_f32(s_m_vec, inv_dist3);
+
+                // accumulate force components
+                f_x_vec = vmlaq_f32(f_x_vec, p_dx, force);
+                f_y_vec = vmlaq_f32(f_y_vec, p_dy, force);
+                f_z_vec = vmlaq_f32(f_z_vec, p_dz, force);
+            }
+
+            // dump the 4 lanes back to memory and sum them up
+            float temp_fx[4], temp_fy[4], temp_fz[4];
+            vst1q_f32(temp_fx, f_x_vec);
+            vst1q_f32(temp_fy, f_y_vec);
+            vst1q_f32(temp_fz, f_z_vec);
+
+            for (int lane = 0; lane < 4; ++lane) {
+                f_x += temp_fx[lane];
+                f_y += temp_fy[lane];
+                f_z += temp_fz[lane];
+            }
+#endif
+            // fallback for the remainder (previous operations left n in mod 8
+            // particles)
+            for (; j < src->particle_cnt; ++j) {
+                uint32_t s_idx = src->first_particle_idx + j;
 
                 float p_dx = sx[s_idx] - t_x;
                 float p_dy = sy[s_idx] - t_y;
@@ -539,7 +746,7 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                 float inv_dist3 = inv_dist * inv_dist * inv_dist;
 
                 // gravity force magnitude
-                float force = sm[s_idx] * inv_dist3 * mask;
+                float force = sm[s_idx] * inv_dist3;
 
                 f_x += p_dx * force;
                 f_y += p_dy * force;
@@ -557,11 +764,11 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
     // otherwise subdivide and recurse (like in m2l)
     if (target->is_leaf) {
         for (int i = 0; i < 8; ++i) {
-            ps__fmm_p2p_pass(target, src->children[i], arrs);
+            ps_impl_fmm_p2p_pass(target, src->children[i], arrs);
         }
     } else if (src->is_leaf) {
         for (int i = 0; i < 8; ++i) {
-            ps__fmm_p2p_pass(target->children[i], src, arrs);
+            ps_impl_fmm_p2p_pass(target->children[i], src, arrs);
         }
     } else {
         for (int i = 0; i < 8; ++i) {
@@ -574,21 +781,23 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                     continue;
                 }
 
-                ps__fmm_p2p_pass(target->children[i], src->children[j], arrs);
+                ps_impl_fmm_p2p_pass(target->children[i], src->children[j],
+                                     arrs);
             }
         }
     }
 }
 
-#define PS__SWAP_PTR(type, a, b)                                               \
+#define PS_IMPL_SWAP_PTR(type, a, b)                                           \
     do {                                                                       \
         type tmp = a;                                                          \
         (a)      = b;                                                          \
         (b)      = tmp;                                                        \
     } while (0)
 
-static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
-                                      const ps_particle_arrs_t* arrs) {
+static ps_result_t ps_impl_sort_particles(ps_arena_t* arena,
+                                          uint32_t*   morton_codes,
+                                          const ps_particle_arrs_t* arrs) {
     size_t cnt = arrs->cnt;
     if (cnt == 0) {
         return PS_OK;
@@ -599,13 +808,13 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
 
     // borrow temp SoA buffers from the arena
     uint32_t* m_tmp =
-        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 16);
+        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 32);
     uint32_t* id_tmp =
-        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 16);
-    float* x_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
-    float* y_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
-    float* z_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
-    float* mass_tmp = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
+        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 32);
+    float* x_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
+    float* y_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
+    float* z_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
+    float* mass_tmp = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
 
     if (!m_tmp || !x_tmp || !y_tmp || !z_tmp || !mass_tmp) {
         return PS_EOOM;
@@ -656,12 +865,12 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
         }
 
         // pingpong pointers for next pass
-        PS__SWAP_PTR(uint32_t*, m_src, m_dst);
-        PS__SWAP_PTR(uint32_t*, id_src, id_dst);
-        PS__SWAP_PTR(float*, x_src, x_dst);
-        PS__SWAP_PTR(float*, y_src, y_dst);
-        PS__SWAP_PTR(float*, z_src, z_dst);
-        PS__SWAP_PTR(float*, mass_src, mass_dst);
+        PS_IMPL_SWAP_PTR(uint32_t*, m_src, m_dst);
+        PS_IMPL_SWAP_PTR(uint32_t*, id_src, id_dst);
+        PS_IMPL_SWAP_PTR(float*, x_src, x_dst);
+        PS_IMPL_SWAP_PTR(float*, y_src, y_dst);
+        PS_IMPL_SWAP_PTR(float*, z_src, z_dst);
+        PS_IMPL_SWAP_PTR(float*, mass_src, mass_dst);
     }
 
     // reclaim memory
@@ -707,15 +916,15 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     ps_arena_clear(&ctx->arena);
 
     // sort the arrays based on morton_codes as keys
-    ps__sort_particles(&ctx->arena, morton_codes, arrs);
+    ps_impl_sort_particles(&ctx->arena, morton_codes, arrs);
 
     // allocate the root node
-    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 32);
     if (!ctx->root) {
         return PS_EOOM;
     }
 
-    ps__node_init(ctx->root);
+    ps_impl_node_init(ctx->root);
 
     // seed geometry
     ctx->root->x          = root_cx;
@@ -725,7 +934,8 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
 
     // build the octree
     for (size_t i = 0; i < arrs->cnt; ++i) {
-        ps__tree_insert(&ctx->arena, ctx->root, morton_codes[i], (uint32_t)i);
+        ps_impl_tree_insert(&ctx->arena, ctx->root, morton_codes[i],
+                            (uint32_t)i);
 
         arrs->fx[i] = 0.0F;
         arrs->fy[i] = 0.0F;
@@ -733,17 +943,17 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     }
 
     // upward pass (p2m -> m2m)
-    ps__fmm_upward_pass(ctx->root, arrs);
+    ps_impl_fmm_upward_pass(ctx->root, arrs);
 
     // interaction pass (m2l)
-    ps__fmm_interaction_pass(ctx->root, ctx->root);
+    ps_impl_fmm_interaction_pass(ctx->root, ctx->root);
 
     // downward pass (l2l)
-    ps__fmm_downward_pass(ctx->root);
+    ps_impl_fmm_downward_pass(ctx->root);
 
     // evaluation pass (l2p->p2p)
-    ps__fmm_l2p_pass(ctx->root, arrs);
-    ps__fmm_p2p_pass(ctx->root, ctx->root, arrs);
+    ps_impl_fmm_l2p_pass(ctx->root, arrs);
+    ps_impl_fmm_p2p_pass(ctx->root, ctx->root, arrs);
 
     return PS_OK;
 }
@@ -755,11 +965,75 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
         return PS_EINVAL;
     }
 
-    float min_b = FLT_MAX;
-    float max_b = -FLT_MAX; // FLT_MIN is minimum normalized positive float
+    float  min_b = FLT_MAX;
+    float  max_b = -FLT_MAX; // FLT_MIN is minimum normalized positive float
+    size_t i     = 0;
 
+#if defined(PS_USE_AVX2)
+    __m256 v_min = _mm256_set1_ps(FLT_MAX);
+    __m256 v_max = _mm256_set1_ps(-FLT_MAX);
+
+    for (; i + 7 < arrs->cnt; i += 8) {
+        __m256 vx = _mm256_loadu_ps(&arrs->x[i]);
+        __m256 vy = _mm256_loadu_ps(&arrs->y[i]);
+        __m256 vz = _mm256_loadu_ps(&arrs->z[i]);
+
+        // find the local min/max for x, y, and z within this chunk
+        __m256 v_cmin = _mm256_min_ps(vx, _mm256_min_ps(vy, vz));
+        __m256 v_cmax = _mm256_max_ps(vx, _mm256_max_ps(vy, vz));
+
+        // accumulate to global min/max
+        v_min = _mm256_min_ps(v_min, v_cmin);
+        v_max = _mm256_max_ps(v_max, v_cmax);
+    }
+
+    // extract the 8 lanes and find abs min/max
+    float temp_min[8], temp_max[8];
+    _mm256_storeu_ps(temp_min, v_min);
+    _mm256_storeu_ps(temp_max, v_max);
+    for (int j = 0; j < 8; ++j) {
+        if (temp_min[j] < min_b) {
+            min_b = temp_min[j];
+        }
+        if (temp_max[j] > max_b) {
+            max_b = temp_max[j];
+        }
+    }
+#elif defined(PS_USE_NEON)
+    float32x4_t v_min = vdupq_n_f32(FLT_MAX);
+    float32x4_t v_max = vdupq_n_f32(-FLT_MAX);
+
+    for (; i + 3 < arrs->cnt; i += 4) {
+        float32x4_t vx = vld1q_f32(&arrs->x[i]);
+        float32x4_t vy = vld1q_f32(&arrs->y[i]);
+        float32x4_t vz = vld1q_f32(&arrs->z[i]);
+
+        // find the local min/max for x, y, and z within this chunk
+        float32x4_t v_cmin = vminq_f32(vx, vminq_f32(vy, vz));
+        float32x4_t v_cmax = vmaxq_f32(vx, vmaxq_f32(vy, vz));
+
+        // accumulate to global min/max
+        v_min = vminq_f32(v_min, v_cmin);
+        v_max = vmaxq_f32(v_max, v_cmax);
+    }
+
+    // extract the 4 lanes and find abs min/max
+    float temp_min[4], temp_max[4];
+    vst1q_f32(temp_min, v_min);
+    vst1q_f32(temp_max, v_max);
+    for (int j = 0; j < 4; ++j) {
+        if (temp_min[j] < min_b) {
+            min_b = temp_min[j];
+        }
+        if (temp_max[j] > max_b) {
+            max_b = temp_max[j];
+        }
+    }
+#endif
+
+    // fallback
     // find cubic bb bounds
-    for (size_t i = 0; i < arrs->cnt; i++) {
+    for (; i < arrs->cnt; i++) {
         if (arrs->x[i] < min_b) {
             min_b = arrs->x[i];
         }
@@ -786,8 +1060,126 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
         range = 0.001F;
     }
 
+    i = 0;
+
+#if defined(PS_USE_AVX2)
+    __m256 v_min_b = _mm256_set1_ps(min_b);
+    __m256 v_scale = _mm256_set1_ps(1023.0F / range);
+    __m256 v_zero  = _mm256_setzero_ps();
+    __m256 v_1023  = _mm256_set1_ps(1023.0F);
+
+    // consts for morton expansion
+    __m256i m_000003FF = _mm256_set1_epi32(0x000003FF);
+    __m256i m_030000FF = _mm256_set1_epi32(0x030000FF);
+    __m256i m_0300F00F = _mm256_set1_epi32(0x0300F00F);
+    __m256i m_030C30C3 = _mm256_set1_epi32(0x030C30C3);
+    __m256i m_09249249 = _mm256_set1_epi32(0x09249249);
+
+// bit exp macro
+#    define PS_EXPAND_AXV2(v)                                                  \
+        (v) = _mm256_and_si256(v, m_000003FF);                                 \
+        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 16)),   \
+                               m_030000FF);                                    \
+        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 8)),    \
+                               m_0300F00F);                                    \
+        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 4)),    \
+                               m_030C30C3);                                    \
+        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 2)),    \
+                               m_09249249);
+
+    for (; i + 7 < arrs->cnt; i += 8) {
+        __m256 vx = _mm256_loadu_ps(&arrs->x[i]);
+        __m256 vy = _mm256_loadu_ps(&arrs->y[i]);
+        __m256 vz = _mm256_loadu_ps(&arrs->z[i]);
+
+        // map to 0-1023
+        vx = _mm256_mul_ps(_mm256_sub_ps(vx, v_min_b), v_scale);
+        vy = _mm256_mul_ps(_mm256_sub_ps(vy, v_min_b), v_scale);
+        vz = _mm256_mul_ps(_mm256_sub_ps(vz, v_min_b), v_scale);
+
+        // clamp to 0-1023
+        vx = _mm256_max_ps(v_zero, _mm256_min_ps(vx, v_1023));
+        vy = _mm256_max_ps(v_zero, _mm256_min_ps(vy, v_1023));
+        vz = _mm256_max_ps(v_zero, _mm256_min_ps(vz, v_1023));
+
+        // convert to int
+        __m256i mx = _mm256_cvtps_epi32(vx);
+        __m256i my = _mm256_cvtps_epi32(vy);
+        __m256i mz = _mm256_cvtps_epi32(vz);
+
+        // expand bits for morton encoding
+        PS_EXPAND_AXV2(mx);
+        PS_EXPAND_AXV2(my);
+        PS_EXPAND_AXV2(mz);
+
+        // interleave bits and store morton codes
+        // ix | (iy << 1) | (iz << 2)
+        __m256i morton_codes_vec =
+            _mm256_or_si256(_mm256_or_si256(mx, _mm256_slli_epi32(my, 1)),
+                            _mm256_slli_epi32(mz, 2));
+
+        _mm256_storeu_si256((__m256i*)&out_morton_codes[i], morton_codes_vec);
+    }
+#    undef PS_EXPAND_AXV2
+#elif defined(PS_USE_NEON)
+    float32x4_t v_min_b = vdupq_n_f32(min_b);
+    float32x4_t v_scale = vdupq_n_f32(1023.0F / range);
+    float32x4_t v_zero  = vdupq_n_f32(0.0F);
+    float32x4_t v_1023  = vdupq_n_f32(1023.0F);
+
+    // consts for morton expansion
+    int32x4_t m_000003FF = vdupq_n_s32(0x000003FF);
+    int32x4_t m_030000FF = vdupq_n_s32(0x030000FF);
+    int32x4_t m_0300F00F = vdupq_n_s32(0x0300F00F);
+    int32x4_t m_030C30C3 = vdupq_n_s32(0x030C30C3);
+    int32x4_t m_09249249 = vdupq_n_s32(0x09249249);
+
+// bit exp macro
+#    define PS_EXPAND_NEON(v)                                                  \
+        (v) = vandq_s32(v, m_000003FF);                                        \
+        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 16)), m_030000FF);         \
+        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 8)), m_0300F00F);          \
+        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 4)), m_030C30C3);          \
+        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 2)), m_09249249);
+
+    for (; i + 3 < arrs->cnt; i += 4) {
+        float32x4_t vx = vld1q_f32(&arrs->x[i]);
+        float32x4_t vy = vld1q_f32(&arrs->y[i]);
+        float32x4_t vz = vld1q_f32(&arrs->z[i]);
+
+        // map to 0-1023
+        vx = vmulq_f32(vsubq_f32(vx, v_min_b), v_scale);
+        vy = vmulq_f32(vsubq_f32(vy, v_min_b), v_scale);
+        vz = vmulq_f32(vsubq_f32(vz, v_min_b), v_scale);
+
+        // clamp to 0-1023
+        vx = vmaxq_f32(v_zero, vminq_f32(vx, v_1023));
+        vy = vmaxq_f32(v_zero, vminq_f32(vy, v_1023));
+        vz = vmaxq_f32(v_zero, vminq_f32(vz, v_1023));
+
+        // convert to int
+        int32x4_t mx = vcvtq_s32_f32(vx);
+        int32x4_t my = vcvtq_s32_f32(vy);
+        int32x4_t mz = vcvtq_s32_f32(vz);
+
+        // expand bits for morton encoding
+        PS_EXPAND_NEON(mx);
+        PS_EXPAND_NEON(my);
+        PS_EXPAND_NEON(mz);
+
+        // interleave bits and store morton codes
+        // ix | (iy << 1) | (iz << 2)
+        int32x4_t morton_codes_vec =
+            vorrq_s32(mx, vorrq_s32(vshlq_n_s32(my, 1), vshlq_n_s32(mz, 2)));
+
+        vst1q_s32((int32_t*)&out_morton_codes[i], morton_codes_vec);
+    }
+#    undef PS_EXPAND_NEON
+#endif
+
+    // fallback
     // gen morton codes mapped to 0-1023
-    for (size_t i = 0; i < arrs->cnt; i++) {
+    for (; i < arrs->cnt; i++) {
         int mx = (int)(((arrs->x[i] - min_b) / range) * 1023.0F);
         int my = (int)(((arrs->y[i] - min_b) / range) * 1023.0F);
         int mz = (int)(((arrs->z[i] - min_b) / range) * 1023.0F);
@@ -811,7 +1203,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
             mz = 1023;
         }
 
-        out_morton_codes[i] = ps__morton_encode(mx, my, mz);
+        out_morton_codes[i] = ps_impl_morton_encode(mx, my, mz);
     }
 
     if (out_min_b) {
