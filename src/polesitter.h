@@ -473,7 +473,40 @@ static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
         float field_y = node->local[2];
         float field_z = node->local[3];
 
-        for (uint32_t i = 0; i < node->particle_cnt; ++i) {
+        uint32_t i = 0;
+
+#if defined(PS_USE_AVX2)
+        // broadcast local bg field to all 8 lanes
+        __m256 f_x_vec = _mm256_set1_ps(field_x);
+        __m256 f_y_vec = _mm256_set1_ps(field_y);
+        __m256 f_z_vec = _mm256_set1_ps(field_z);
+
+        // process in chunks of 8
+        for (; i + 7 < node->particle_cnt; i += 8) {
+            uint32_t idx = node->first_particle_idx + i;
+
+            // load 8 masses
+            __m256 m_vec = _mm256_load_ps(&arrs->mass[idx]);
+
+            // load 8 current forces
+            __m256 cur_fx = _mm256_load_ps(&arrs->fx[idx]);
+            __m256 cur_fy = _mm256_load_ps(&arrs->fy[idx]);
+            __m256 cur_fz = _mm256_load_ps(&arrs->fz[idx]);
+
+            // F_x += mass * field_x
+            cur_fx = _mm256_add_ps(cur_fx, _mm256_mul_ps(m_vec, f_x_vec));
+            cur_fy = _mm256_add_ps(cur_fy, _mm256_mul_ps(m_vec, f_y_vec));
+            cur_fz = _mm256_add_ps(cur_fz, _mm256_mul_ps(m_vec, f_z_vec));
+
+            // store 8 updated forces back to mem
+            _mm256_store_ps(&arrs->fx[idx], cur_fx);
+            _mm256_store_ps(&arrs->fy[idx], cur_fy);
+            _mm256_store_ps(&arrs->fz[idx], cur_fz);
+        }
+#endif
+
+        // fallback for the remainder
+        for (; i < node->particle_cnt; ++i) {
             uint32_t idx  = node->first_particle_idx + i;
             float    mass = arrs->mass[idx];
 
