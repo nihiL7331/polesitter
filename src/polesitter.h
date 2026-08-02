@@ -860,11 +860,45 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
         return PS_EINVAL;
     }
 
-    float min_b = FLT_MAX;
-    float max_b = -FLT_MAX; // FLT_MIN is minimum normalized positive float
+    float  min_b = FLT_MAX;
+    float  max_b = -FLT_MAX; // FLT_MIN is minimum normalized positive float
+    size_t i     = 0;
 
+#if defined(PS_USE_AVX2)
+    __m256 v_min = _mm256_set1_ps(FLT_MAX);
+    __m256 v_max = _mm256_set1_ps(-FLT_MAX);
+
+    for (; i + 7 < arrs->cnt; i += 8) {
+        __m256 vx = _mm256_loadu_ps(&arrs->x[i]);
+        __m256 vy = _mm256_loadu_ps(&arrs->y[i]);
+        __m256 vz = _mm256_loadu_ps(&arrs->z[i]);
+
+        // find the local min/max for x, y, and z within this chunk
+        __m256 v_cmin = _mm256_min_ps(vx, _mm256_min_ps(vy, vz));
+        __m256 v_cmax = _mm256_max_ps(vx, _mm256_max_ps(vy, vz));
+
+        // accumulate to global min/max
+        v_min = _mm256_min_ps(v_min, v_cmin);
+        v_max = _mm256_max_ps(v_max, v_cmax);
+    }
+
+    // extract the 8 lanes and find abs min/max
+    float temp_min[8], temp_max[8];
+    _mm256_storeu_ps(temp_min, v_min);
+    _mm256_storeu_ps(temp_max, v_max);
+    for (int j = 0; j < 8; ++j) {
+        if (temp_min[j] < min_b) {
+            min_b = temp_min[j];
+        }
+        if (temp_max[j] > max_b) {
+            max_b = temp_max[j];
+        }
+    }
+#endif
+
+    // fallback
     // find cubic bb bounds
-    for (size_t i = 0; i < arrs->cnt; i++) {
+    for (; i < arrs->cnt; i++) {
         if (arrs->x[i] < min_b) {
             min_b = arrs->x[i];
         }
@@ -891,8 +925,72 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
         range = 0.001F;
     }
 
+    i = 0;
+
+#if defined(PS_USE_AVX2)
+    __m256 v_min_b = _mm256_set1_ps(min_b);
+    __m256 v_scale = _mm256_set1_ps(1023.0F / range);
+    __m256 v_zero  = _mm256_setzero_ps();
+    __m256 v_1023  = _mm256_set1_ps(1023.0F);
+
+    // consts for morton expansion
+    __m256i m_000003FF = _mm256_set1_epi32(0x000003FF);
+    __m256i m_030000FF = _mm256_set1_epi32(0x030000FF);
+    __m256i m_0300F00F = _mm256_set1_epi32(0x0300F00F);
+    __m256i m_030C30C3 = _mm256_set1_epi32(0x030C30C3);
+    __m256i m_09249249 = _mm256_set1_epi32(0x09249249);
+
+// bit exp macro
+#    define PS_EXPAND_AXV2(v)                                                  \
+        (v) = _mm256_and_si256(v, m_000003FF);                                 \
+        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 16)),   \
+                               m_030000FF);                                    \
+        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 8)),    \
+                               m_0300F00F);                                    \
+        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 4)),    \
+                               m_030C30C3);                                    \
+        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 2)),    \
+                               m_09249249);
+
+    for (; i + 7 < arrs->cnt; i += 8) {
+        __m256 vx = _mm256_loadu_ps(&arrs->x[i]);
+        __m256 vy = _mm256_loadu_ps(&arrs->y[i]);
+        __m256 vz = _mm256_loadu_ps(&arrs->z[i]);
+
+        // map to 0-1023
+        vx = _mm256_mul_ps(_mm256_sub_ps(vx, v_min_b), v_scale);
+        vy = _mm256_mul_ps(_mm256_sub_ps(vy, v_min_b), v_scale);
+        vz = _mm256_mul_ps(_mm256_sub_ps(vz, v_min_b), v_scale);
+
+        // clamp to 0-1023
+        vx = _mm256_max_ps(v_zero, _mm256_min_ps(vx, v_1023));
+        vy = _mm256_max_ps(v_zero, _mm256_min_ps(vy, v_1023));
+        vz = _mm256_max_ps(v_zero, _mm256_min_ps(vz, v_1023));
+
+        // convert to int
+        __m256i mx = _mm256_cvtps_epi32(vx);
+        __m256i my = _mm256_cvtps_epi32(vy);
+        __m256i mz = _mm256_cvtps_epi32(vz);
+
+        // expand bits for morton encoding
+        PS_EXPAND_AXV2(mx);
+        PS_EXPAND_AXV2(my);
+        PS_EXPAND_AXV2(mz);
+
+        // interleave bits and store morton codes
+        // ix | (iy << 1) | (iz << 2)
+        __m256i morton_codes_vec =
+            _mm256_or_si256(_mm256_or_si256(mx, _mm256_slli_epi32(my, 1)),
+                            _mm256_slli_epi32(mz, 2));
+
+        _mm256_storeu_si256((__m256i*)&out_morton_codes[i], morton_codes_vec);
+    }
+#    undef PS_EXPAND_AXV2
+#endif
+
+    // fallback
     // gen morton codes mapped to 0-1023
-    for (size_t i = 0; i < arrs->cnt; i++) {
+    for (; i < arrs->cnt; i++) {
         int mx = (int)(((arrs->x[i] - min_b) / range) * 1023.0F);
         int my = (int)(((arrs->y[i] - min_b) / range) * 1023.0F);
         int mz = (int)(((arrs->z[i] - min_b) / range) * 1023.0F);
