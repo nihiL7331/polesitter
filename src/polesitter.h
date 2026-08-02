@@ -653,9 +653,9 @@ static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
             cur_fz = _mm256_add_ps(cur_fz, _mm256_mul_ps(m_vec, f_z_vec));
 
             // store 8 updated forces back to mem
-            _mm256_store_ps(&arrs->fx[idx], cur_fx);
-            _mm256_store_ps(&arrs->fy[idx], cur_fy);
-            _mm256_store_ps(&arrs->fz[idx], cur_fz);
+            _mm256_storeu_ps(&arrs->fx[idx], cur_fx);
+            _mm256_storeu_ps(&arrs->fy[idx], cur_fy);
+            _mm256_storeu_ps(&arrs->fz[idx], cur_fz);
         }
 #elif defined(PS_USE_NEON)
         // broadcast local bg field to all 4 lanes
