@@ -1,3 +1,4 @@
+// clang-format off
 /*-
     polesitter - v1.0 - Fast Multipole Method (FFM) N-body solver written in C99
 
@@ -151,6 +152,7 @@
         }
         ```
 */
+// clang-format on
 
 #ifndef POLESITTER_H
 #define POLESITTER_H
