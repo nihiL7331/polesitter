@@ -503,7 +503,7 @@ static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
             __m256 cur_fy = _mm256_loadu_ps(&arrs->fy[idx]);
             __m256 cur_fz = _mm256_loadu_ps(&arrs->fz[idx]);
 
-            // F_x += mass * field_x
+            // F_xyz += mass * field_xyz
             cur_fx = _mm256_add_ps(cur_fx, _mm256_mul_ps(m_vec, f_x_vec));
             cur_fy = _mm256_add_ps(cur_fy, _mm256_mul_ps(m_vec, f_y_vec));
             cur_fz = _mm256_add_ps(cur_fz, _mm256_mul_ps(m_vec, f_z_vec));
@@ -512,6 +512,34 @@ static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
             _mm256_store_ps(&arrs->fx[idx], cur_fx);
             _mm256_store_ps(&arrs->fy[idx], cur_fy);
             _mm256_store_ps(&arrs->fz[idx], cur_fz);
+        }
+#elif defined(PS_USE_NEON)
+        // broadcast local bg field to all 4 lanes
+        float32x4_t f_x_vec = vdupq_n_f32(field_x);
+        float32x4_t f_y_vec = vdupq_n_f32(field_y);
+        float32x4_t f_z_vec = vdupq_n_f32(field_z);
+
+        // process in chunks of 4
+        for (; i + 3 < node->particle_cnt; i += 4) {
+            uint32_t idx = node->first_particle_idx + i;
+
+            // load 4 masses
+            float32x4_t m_vec = vld1q_f32(&arrs->mass[idx]);
+
+            // load 4 current forces
+            float32x4_t cur_fx = vld1q_f32(&arrs->fx[idx]);
+            float32x4_t cur_fy = vld1q_f32(&arrs->fy[idx]);
+            float32x4_t cur_fz = vld1q_f32(&arrs->fz[idx]);
+
+            // F_xyz += mass * field_xyz
+            cur_fx = vmlaq_f32(cur_fx, m_vec, f_x_vec);
+            cur_fy = vmlaq_f32(cur_fy, m_vec, f_y_vec);
+            cur_fz = vmlaq_f32(cur_fz, m_vec, f_z_vec);
+
+            // store 4 updated forces back to mem
+            vst1q_f32(&arrs->fx[idx], cur_fx);
+            vst1q_f32(&arrs->fy[idx], cur_fy);
+            vst1q_f32(&arrs->fz[idx], cur_fz);
         }
 #endif
 
