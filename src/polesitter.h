@@ -1,53 +1,179 @@
 /*
-    polesitter - Fast Multipole Method (FFM) N-body solver written in C99
+    polesitter - v1.0 - Fast Multipole Method (FFM) N-body solver written in C99
 
-    This software is available under the MIT license:
+    Do this:
+        #define POLESITTER_IMPLEMENTATION
+    before you include this file in *one* C or C++ file to create the
+   implementation.
 
-    Copyright (c) 2026 Patryk Pujanek
+    // i.e. it should look like this:
+    #include ...
+    #include ...
+    #include ...
+    #define POLESITTER_IMPLEMENTATION
+    #include "polesitter.h"
 
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to
-   deal in the Software without restriction, including without limitation the
-   rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-   sell copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
+    QUICK NOTES:
+        Primarily of interest to game devs and graphics programmers.
 
-    The above copyright notice and this permission notice shall be included in
-   all copies or substantial portions of the Software.
+        Requires bringing your own memory buffer.
+        No malloc/free calls are made internally.
 
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-   IN THE SOFTWARE.
+    LICENSE
+        See end of file for license information.
+
+    QUICKSTART
+
+        ```
+        #define POLESITTER_IMPLEMENTATION
+        #include "polesitter.h"
+        #include <stdint.h>
+        #include <stdlib.h>
+        #include <stdbool.h>
+
+        #define MEMORY_SIZE 1024ULL * 1024 * 16 // 16 MB
+        #define PARTICLE_CNT 1024
+
+        int main(void) {
+            // provide a raw memory block
+
+            void* memory_block = malloc(MEMORY_SIZE);
+
+            // initialize the context
+
+            ps_config_t cfg = { memory_block, MEMORY_SIZE };
+            ps_context_t* ctx = NULL;
+            ps_init(&ctx, &cfg);
+
+            // SoA particle arrays
+
+            float x[PARTICLE_CNT];
+            float y[PARTICLE_CNT];
+            float z[PARTICLE_CNT];
+            float mass[PARTICLE_CNT];
+            float fx[PARTICLE_CNT] = {0};
+            float fy[PARTICLE_CNT] = {0};
+            float fz[PARTICLE_CNT] = {0};
+
+            // external arrays not managed by the solver
+
+            float vx[PARTICLE_CNT] = {0};
+            float vy[PARTICLE_CNT] = {0};
+            float vz[PARTICLE_CNT] = {0};
+            uint32_t morton_codes[PARTICLE_CNT];
+            uint32_t ids[PARTICLE_CNT];
+
+            // initialize positions and masses
+            // ...
+
+            ps_particle_arrs_t arrs = {
+                x, y, z, mass,
+                fx, fy, fz,
+                ids, PARTICLE_CNT
+            };
+
+            float dt = 0.016F; // 60FPS
+            bool running = true;
+            while (running) {
+                // reset arena and force accumulators for the new frame
+
+                ps_arena_clear(&ctx->arena);
+                for (int i = 0; i < PARTICLE_CNT; ++i) {
+                    ids[i] = i; // reset ids before sorting
+                    fx[i] = 0.0F; fy[i] = 0.0F; fz[i] = 0.0F;
+                }
+
+                // calculate the global bounding box, sort arrays via morton
+
+                float min_b, max_b, range;
+                ps_prepare_particles(
+                    &arrs,
+                    morton_codes,
+                    &min_b,
+                    &max_b,
+                    &range
+                );
+
+                // run the physics tick
+                // it builds the octree, computes mps and evals forces
+
+                float root_c  = min_b + (range / 2.0F);
+                float root_hw = range / 2.0F;
+                ps_calc_forces(
+                    ctx,
+                    &arrs,
+                    morton_codes,
+                    root_c,
+                    root_c,
+                    root_c,
+                    root_hw
+                );
+
+                // shuffle extern vel arrs to match the newly sorted pos
+
+                float tmp_vx[PARTICLE_CNT];
+                float tmp_vy[PARTICLE_CNT];
+                float tmp_vz[PARTICLE_CNT];
+                for (int i = 0; i < PARTICLE_CNT; ++i) {
+                    uint32_t old_idx = ids[i];
+                    tmp_vx[i] = vx[old_idx];
+                    tmp_vy[i] = vy[old_idx];
+                    tmp_vz[i] = vz[old_idx];
+                }
+                for (int i = 0; i < PARTICLE_CNT; ++i) {
+                    vx[i] = tmp_vx[i];
+                    vy[i] = tmp_vy[i];
+                    vz[i] = tmp_vz[i];
+                }
+
+                // integrate velocities/positions externally,
+                // polesitter doesn't handle that
+                // e.g. via semi-implicit euler:
+
+                for (int i = 0; i < PARTICLE_CNT; ++i) {
+                    if (mass[i] <= 0.0F) {
+                        continue;
+                    }
+
+                    vx[i] += (fx[i] / mass[i]) * dt;
+                    vy[i] += (fy[i] / mass[i]) * dt;
+                    vz[i] += (fz[i] / mass[i]) * dt;
+
+                    x[i] += vx[i] * dt;
+                    y[i] += vy[i] * dt;
+                    z[i] += vz[i] * dt;
+                }
+            }
+
+            // cleanup
+            free(memory_block);
+            return 0;
+        }
+        ```
 */
 #ifndef POLESITTER_H
-#define POLESITTER_H
+#    define POLESITTER_H
 
-#include <float.h>
-#include <math.h>
-#include <stddef.h>
-#include <stdint.h>
+#    include <float.h>
+#    include <math.h>
+#    include <stddef.h>
+#    include <stdint.h>
 
-#if defined(__AVX2__)
-#    include <immintrin.h>
-#    define PS_USE_AVX2
-#elif defined(__aarch64__) || defined(_M_ARM64)
-#    include <arm_neon.h>
-#    define PS_USE_NEON
-#else
-#    define PS_USE_SCALAR
-#endif
-
-#ifndef PS_RESTRICT
-#    if defined(__cplusplus) || defined(_MSC_VER)
-#        define PS_RESTRICT __restrict
-#    else
-#        define PS_RESTRICT restrict
+#    if defined(__AVX2__)
+#        include <immintrin.h>
+#        define PS_USE_AVX2
+#    elif defined(__aarch64__) || defined(_M_ARM64)
+#        include <arm_neon.h>
+#        define PS_USE_NEON
 #    endif
-#endif
+
+#    ifndef PS_RESTRICT
+#        if defined(__cplusplus) || defined(_MSC_VER)
+#            define PS_RESTRICT __restrict
+#        else
+#            define PS_RESTRICT restrict
+#        endif
+#    endif
 
 // =====================================================================
 // public api
@@ -205,8 +331,8 @@ static void ps_arena_clear(ps_arena_t* arena) {
     arena->off = 0;
 }
 
-#define PS_MAX_DEPTH                                                           \
-    10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
+#    define PS_MAX_DEPTH                                                       \
+        10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
 
 // zero out a newly allocated node
 static void ps_impl_node_init(ps_node_t* node) {
@@ -485,7 +611,7 @@ static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
 
         uint32_t i = 0;
 
-#if defined(PS_USE_AVX2)
+#    if defined(PS_USE_AVX2)
         // broadcast local bg field to all 8 lanes
         __m256 f_x_vec = _mm256_set1_ps(field_x);
         __m256 f_y_vec = _mm256_set1_ps(field_y);
@@ -513,7 +639,7 @@ static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
             _mm256_store_ps(&arrs->fy[idx], cur_fy);
             _mm256_store_ps(&arrs->fz[idx], cur_fz);
         }
-#elif defined(PS_USE_NEON)
+#    elif defined(PS_USE_NEON)
         // broadcast local bg field to all 4 lanes
         float32x4_t f_x_vec = vdupq_n_f32(field_x);
         float32x4_t f_y_vec = vdupq_n_f32(field_y);
@@ -541,7 +667,7 @@ static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
             vst1q_f32(&arrs->fy[idx], cur_fy);
             vst1q_f32(&arrs->fz[idx], cur_fz);
         }
-#endif
+#    endif
 
         // fallback for the remainder
         for (; i < node->particle_cnt; ++i) {
@@ -604,7 +730,7 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
             const float* PS_RESTRICT sm = arrs->mass;
 
             uint32_t j = 0;
-#if defined(PS_USE_AVX2)
+#    if defined(PS_USE_AVX2)
             // broadcast target coords and soft param
             __m256 t_x_vec = _mm256_set1_ps(t_x);
             __m256 t_y_vec = _mm256_set1_ps(t_y);
@@ -665,7 +791,7 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                 f_z += temp_fz[lane];
             }
 
-#elif defined(PS_USE_NEON)
+#    elif defined(PS_USE_NEON)
             // broadcast target coords and soft param
             float32x4_t t_x_vec = vdupq_n_f32(t_x);
             float32x4_t t_y_vec = vdupq_n_f32(t_y);
@@ -728,7 +854,7 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                 f_y += temp_fy[lane];
                 f_z += temp_fz[lane];
             }
-#endif
+#    endif
             // fallback for the remainder (previous operations left n in mod 8
             // particles)
             for (; j < src->particle_cnt; ++j) {
@@ -788,12 +914,12 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
     }
 }
 
-#define PS_IMPL_SWAP_PTR(type, a, b)                                           \
-    do {                                                                       \
-        type tmp = a;                                                          \
-        (a)      = b;                                                          \
-        (b)      = tmp;                                                        \
-    } while (0)
+#    define PS_IMPL_SWAP_PTR(type, a, b)                                       \
+        do {                                                                   \
+            type tmp = a;                                                      \
+            (a)      = b;                                                      \
+            (b)      = tmp;                                                    \
+        } while (0)
 
 static ps_result_t ps_impl_sort_particles(ps_arena_t* arena,
                                           uint32_t*   morton_codes,
@@ -969,7 +1095,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
     float  max_b = -FLT_MAX; // FLT_MIN is minimum normalized positive float
     size_t i     = 0;
 
-#if defined(PS_USE_AVX2)
+#    if defined(PS_USE_AVX2)
     __m256 v_min = _mm256_set1_ps(FLT_MAX);
     __m256 v_max = _mm256_set1_ps(-FLT_MAX);
 
@@ -999,7 +1125,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
             max_b = temp_max[j];
         }
     }
-#elif defined(PS_USE_NEON)
+#    elif defined(PS_USE_NEON)
     float32x4_t v_min = vdupq_n_f32(FLT_MAX);
     float32x4_t v_max = vdupq_n_f32(-FLT_MAX);
 
@@ -1029,7 +1155,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
             max_b = temp_max[j];
         }
     }
-#endif
+#    endif
 
     // fallback
     // find cubic bb bounds
@@ -1062,7 +1188,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
     i = 0;
 
-#if defined(PS_USE_AVX2)
+#    if defined(PS_USE_AVX2)
     __m256 v_min_b = _mm256_set1_ps(min_b);
     __m256 v_scale = _mm256_set1_ps(1023.0F / range);
     __m256 v_zero  = _mm256_setzero_ps();
@@ -1076,16 +1202,16 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
     __m256i m_09249249 = _mm256_set1_epi32(0x09249249);
 
 // bit exp macro
-#    define PS_EXPAND_AXV2(v)                                                  \
-        (v) = _mm256_and_si256(v, m_000003FF);                                 \
-        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 16)),   \
-                               m_030000FF);                                    \
-        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 8)),    \
-                               m_0300F00F);                                    \
-        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 4)),    \
-                               m_030C30C3);                                    \
-        (v) = _mm256_and_si256(_mm256_or_si256(v, _mm256_slli_epi32(v, 2)),    \
-                               m_09249249);
+#        define PS_EXPAND_AXV2(v)                                              \
+            (v) = _mm256_and_si256(v, m_000003FF);                             \
+            (v) = _mm256_and_si256(                                            \
+                _mm256_or_si256(v, _mm256_slli_epi32(v, 16)), m_030000FF);     \
+            (v) = _mm256_and_si256(                                            \
+                _mm256_or_si256(v, _mm256_slli_epi32(v, 8)), m_0300F00F);      \
+            (v) = _mm256_and_si256(                                            \
+                _mm256_or_si256(v, _mm256_slli_epi32(v, 4)), m_030C30C3);      \
+            (v) = _mm256_and_si256(                                            \
+                _mm256_or_si256(v, _mm256_slli_epi32(v, 2)), m_09249249);
 
     for (; i + 7 < arrs->cnt; i += 8) {
         __m256 vx = _mm256_loadu_ps(&arrs->x[i]);
@@ -1120,8 +1246,8 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
         _mm256_storeu_si256((__m256i*)&out_morton_codes[i], morton_codes_vec);
     }
-#    undef PS_EXPAND_AXV2
-#elif defined(PS_USE_NEON)
+#        undef PS_EXPAND_AXV2
+#    elif defined(PS_USE_NEON)
     float32x4_t v_min_b = vdupq_n_f32(min_b);
     float32x4_t v_scale = vdupq_n_f32(1023.0F / range);
     float32x4_t v_zero  = vdupq_n_f32(0.0F);
@@ -1135,12 +1261,12 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
     int32x4_t m_09249249 = vdupq_n_s32(0x09249249);
 
 // bit exp macro
-#    define PS_EXPAND_NEON(v)                                                  \
-        (v) = vandq_s32(v, m_000003FF);                                        \
-        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 16)), m_030000FF);         \
-        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 8)), m_0300F00F);          \
-        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 4)), m_030C30C3);          \
-        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 2)), m_09249249);
+#        define PS_EXPAND_NEON(v)                                              \
+            (v) = vandq_s32(v, m_000003FF);                                    \
+            (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 16)), m_030000FF);     \
+            (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 8)), m_0300F00F);      \
+            (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 4)), m_030C30C3);      \
+            (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 2)), m_09249249);
 
     for (; i + 3 < arrs->cnt; i += 4) {
         float32x4_t vx = vld1q_f32(&arrs->x[i]);
@@ -1174,8 +1300,8 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
         vst1q_s32((int32_t*)&out_morton_codes[i], morton_codes_vec);
     }
-#    undef PS_EXPAND_NEON
-#endif
+#        undef PS_EXPAND_NEON
+#    endif
 
     // fallback
     // gen morton codes mapped to 0-1023
@@ -1220,3 +1346,27 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 }
 
 #endif // POLESITTER_IMPLEMENTATION
+
+/*
+    This software is available under the MIT license:
+
+    Copyright (c) 2026 Patryk Pujanek
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to
+   deal in the Software without restriction, including without limitation the
+   rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+   sell copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+   IN THE SOFTWARE.
+*/

@@ -108,7 +108,6 @@ int main(void) {
     free(memory_block);
     return 0;
 }
-
 ```
 
 ## Pipeline
