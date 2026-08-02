@@ -19,5 +19,5 @@ AllowShortFunctionsOnASingleLine: InlineOnly
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLoopsOnASingleLine: false
 
-IndentPPDirectives: AfterHash
+IndentPPDirectives: None
 ...
