@@ -6,9 +6,11 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-add_executable(polesitter_demo main.c)
+add_executable(polesitter_unary unary.c)
+add_executable(polesitter_binary binary.c)
 
-target_include_directories(polesitter_demo PRIVATE ../src)
+target_include_directories(polesitter_unary PRIVATE ../src)
+target_include_directories(polesitter_binary PRIVATE ../src)
 
 find_package(raylib QUIET)
 
@@ -23,18 +25,19 @@ if(NOT raylib_FOUND)
     FetchContent_MakeAvailable(raylib)
 endif()
 
-target_link_libraries(polesitter_demo PRIVATE raylib)
+target_link_libraries(polesitter_unary PRIVATE raylib)
+target_link_libraries(polesitter_binary PRIVATE raylib)
 
 if(NOT MSVC)
-    target_link_libraries(polesitter_demo PRIVATE m)
+    target_link_libraries(polesitter_unary PRIVATE m)
+    target_link_libraries(polesitter_binary PRIVATE m)
 endif()
 
 if(MSVC)
-    add_compile_options(polesitter_demo PRIVATE
-        /W4 /WX /O2
-    )
+    set(POLESITTER_FLAGS /W4 /WX /O2)
 else()
-    add_compile_options(polesitter_demo PRIVATE
-        -Wall -Wextra -O3 -ffast-math -march=native
-    )
+    set(POLESITTER_FLAGS -Wall -Wextra -O3 -ffast-math -march=native)
 endif()
+
+target_compile_options(polesitter_unary PRIVATE ${POLESITTER_FLAGS})
+target_compile_options(polesitter_binary PRIVATE ${POLESITTER_FLAGS})
