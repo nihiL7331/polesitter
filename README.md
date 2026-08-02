@@ -37,6 +37,9 @@ int main(void) {
     float x[PARTICLE_CNT], y[PARTICLE_CNT], z[PARTICLE_CNT];
     float mass[PARTICLE_CNT];
     float fx[PARTICLE_CNT] = {0}, fy[PARTICLE_CNT] = {0}, fz[PARTICLE_CNT] = {0};
+
+    // external arrays not managed by the solver
+    float vx[PARTICLE_CNT] = {0}, vy[PARTICLE_CNT] = {0}, vz[PARTICLE_CNT] = {0};
     uint32_t morton_codes[PARTICLE_CNT];
     uint32_t ids[PARTICLE_CNT];
 
@@ -49,20 +52,59 @@ int main(void) {
         ids, PARTICLE_CNT
     };
 
-    // calculate the global bounding box, generate morton codes
-    float min_b, max_b, range;
-    ps_prepare_particles(&arrs, morton_codes, &min_b, &max_b, &range);
+    float dt = 0.016F; // 60FPS
+    bool running = true;
+    while (running) {
+        // reset arena and force accumulators for the new frame
+        ps_arena_clear(&ctx->arena);
+        for (int i = 0; i < PARTICLE_CNT; ++i) {
+            ids[i] = i; // reset ids before sorting
+            fx[i] = 0.0F; fy[i] = 0.0F; fz[i] = 0.0F;
+        }
 
-    // run the physics tick
-    // it builds the octree, computes multipoles and evaluates forces
-    float root_c  = min_b + (range / 2.0F);
-    float root_hw = range / 2.0F;
-    ps_calc_forces(ctx, &arrs, morton_codes, root_c, root_c, root_c, root_hw);
+        // calculate the global bounding box, sort arrays via morton codes
+        float min_b, max_b, range;
+        ps_prepare_particles(&arrs, morton_codes, &min_b, &max_b, &range);
 
-    // integrate velocities/positions externally,
-    // polesitter doesn't handle that
-    // ...
+        // run the physics tick
+        // it builds the octree, computes multipoles and evaluates forces
+        float root_c  = min_b + (range / 2.0F);
+        float root_hw = range / 2.0F;
+        ps_calc_forces(ctx, &arrs, morton_codes, root_c, root_c, root_c, root_hw);
 
+        // shuffle external velocity arrays to match the newly sorted positions
+        float tmp_vx[PARTICLE_CNT], tmp_vy[PARTICLE_CNT], tmp_vz[PARTICLE_CNT];
+        for (int i = 0; i < PARTICLE_CNT; ++i) {
+            uint32_t old_idx = ids[i];
+            tmp_vx[i] = vx[old_idx];
+            tmp_vy[i] = vy[old_idx];
+            tmp_vz[i] = vz[old_idx];
+        }
+        for (int i = 0; i < PARTICLE_CNT; ++i) {
+            vx[i] = tmp_vx[i];
+            vy[i] = tmp_vy[i];
+            vz[i] = tmp_vz[i];
+        }
+
+        // integrate velocities/positions externally,
+        // polesitter doesn't handle that
+        // e.g. via semi-implicit euler:
+        for (int i = 0; i < PARTICLE_CNT; ++i) {
+            if (mass[i] <= 0.0F) {
+                continue;
+            }
+
+            vx[i] += (fx[i] / mass[i]) * dt;
+            vy[i] += (fy[i] / mass[i]) * dt;
+            vz[i] += (fz[i] / mass[i]) * dt;
+
+            x[i] += vx[i] * dt;
+            y[i] += vy[i] * dt;
+            z[i] += vz[i] * dt;
+        }
+    }
+
+    // cleanup
     free(memory_block);
     return 0;
 }
