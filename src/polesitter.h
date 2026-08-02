@@ -999,6 +999,36 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
             max_b = temp_max[j];
         }
     }
+#elif defined(PS_USE_NEON)
+    float32x4_t v_min = vdupq_n_f32(FLT_MAX);
+    float32x4_t v_max = vdupq_n_f32(-FLT_MAX);
+
+    for (; i + 3 < arrs->cnt; i += 4) {
+        float32x4_t vx = vld1q_f32(&arrs->x[i]);
+        float32x4_t vy = vld1q_f32(&arrs->y[i]);
+        float32x4_t vz = vld1q_f32(&arrs->z[i]);
+
+        // find the local min/max for x, y, and z within this chunk
+        float32x4_t v_cmin = vminq_f32(vx, vminq_f32(vy, vz));
+        float32x4_t v_cmax = vmaxq_f32(vx, vmaxq_f32(vy, vz));
+
+        // accumulate to global min/max
+        v_min = vminq_f32(v_min, v_cmin);
+        v_max = vmaxq_f32(v_max, v_cmax);
+    }
+
+    // extract the 4 lanes and find abs min/max
+    float temp_min[4], temp_max[4];
+    vst1q_f32(temp_min, v_min);
+    vst1q_f32(temp_max, v_max);
+    for (int j = 0; j < 4; ++j) {
+        if (temp_min[j] < min_b) {
+            min_b = temp_min[j];
+        }
+        if (temp_max[j] > max_b) {
+            max_b = temp_max[j];
+        }
+    }
 #endif
 
     // fallback
@@ -1091,6 +1121,60 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
         _mm256_storeu_si256((__m256i*)&out_morton_codes[i], morton_codes_vec);
     }
 #    undef PS_EXPAND_AXV2
+#elif defined(PS_USE_NEON)
+    float32x4_t v_min_b = vdupq_n_f32(min_b);
+    float32x4_t v_scale = vdupq_n_f32(1023.0F / range);
+    float32x4_t v_zero  = vdupq_n_f32(0.0F);
+    float32x4_t v_1023  = vdupq_n_f32(1023.0F);
+
+    // consts for morton expansion
+    int32x4_t m_000003FF = vdupq_n_s32(0x000003FF);
+    int32x4_t m_030000FF = vdupq_n_s32(0x030000FF);
+    int32x4_t m_0300F00F = vdupq_n_s32(0x0300F00F);
+    int32x4_t m_030C30C3 = vdupq_n_s32(0x030C30C3);
+    int32x4_t m_09249249 = vdupq_n_s32(0x09249249);
+
+// bit exp macro
+#    define PS_EXPAND_NEON(v)                                                  \
+        (v) = vandq_s32(v, m_000003FF);                                        \
+        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 16)), m_030000FF);         \
+        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 8)), m_0300F00F);          \
+        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 4)), m_030C30C3);          \
+        (v) = vandq_s32(vorrq_s32(v, vshlq_n_s32(v, 2)), m_09249249);
+
+    for (; i + 3 < arrs->cnt; i += 4) {
+        float32x4_t vx = vld1q_f32(&arrs->x[i]);
+        float32x4_t vy = vld1q_f32(&arrs->y[i]);
+        float32x4_t vz = vld1q_f32(&arrs->z[i]);
+
+        // map to 0-1023
+        vx = vmulq_f32(vsubq_f32(vx, v_min_b), v_scale);
+        vy = vmulq_f32(vsubq_f32(vy, v_min_b), v_scale);
+        vz = vmulq_f32(vsubq_f32(vz, v_min_b), v_scale);
+
+        // clamp to 0-1023
+        vx = vmaxq_f32(v_zero, vminq_f32(vx, v_1023));
+        vy = vmaxq_f32(v_zero, vminq_f32(vy, v_1023));
+        vz = vmaxq_f32(v_zero, vminq_f32(vz, v_1023));
+
+        // convert to int
+        int32x4_t mx = vcvtq_s32_f32(vx);
+        int32x4_t my = vcvtq_s32_f32(vy);
+        int32x4_t mz = vcvtq_s32_f32(vz);
+
+        // expand bits for morton encoding
+        PS_EXPAND_NEON(mx);
+        PS_EXPAND_NEON(my);
+        PS_EXPAND_NEON(mz);
+
+        // interleave bits and store morton codes
+        // ix | (iy << 1) | (iz << 2)
+        int32x4_t morton_codes_vec =
+            vorrq_s32(mx, vorrq_s32(vshlq_n_s32(my, 1), vshlq_n_s32(mz, 2)));
+
+        vst1q_s32((int32_t*)&out_morton_codes[i], morton_codes_vec);
+    }
+#    undef PS_EXPAND_NEON
 #endif
 
     // fallback
