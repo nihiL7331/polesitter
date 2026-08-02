@@ -1,6 +1,8 @@
 #include <math.h>
+#include <mm_malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #define POLESITTER_IMPLEMENTATION
@@ -61,15 +63,18 @@ int main(void) {
     for (int t = 0; t < num_tests; ++t) {
         int count = test_sizes[t];
 
-        float*    px           = malloc(count * sizeof(float));
-        float*    py           = malloc(count * sizeof(float));
-        float*    pz           = malloc(count * sizeof(float));
-        float*    mass         = malloc(count * sizeof(float));
-        float*    fx           = calloc(count, sizeof(float));
-        float*    fy           = calloc(count, sizeof(float));
-        float*    fz           = calloc(count, sizeof(float));
-        uint32_t* id           = malloc(count * sizeof(uint32_t));
-        uint32_t* morton_codes = malloc(count * sizeof(uint32_t));
+        float*    px           = _mm_malloc(count * sizeof(float), 32);
+        float*    py           = _mm_malloc(count * sizeof(float), 32);
+        float*    pz           = _mm_malloc(count * sizeof(float), 32);
+        float*    mass         = _mm_malloc(count * sizeof(float), 32);
+        float*    fx           = _mm_malloc(count * sizeof(float), 32);
+        float*    fy           = _mm_malloc(count * sizeof(float), 32);
+        float*    fz           = _mm_malloc(count * sizeof(float), 32);
+        uint32_t* id           = _mm_malloc(count * sizeof(uint32_t), 32);
+        uint32_t* morton_codes = _mm_malloc(count * sizeof(uint32_t), 32);
+        memset(fx, 0, count * sizeof(float));
+        memset(fy, 0, count * sizeof(float));
+        memset(fz, 0, count * sizeof(float));
 
         srand(7331);
         for (int i = 0; i < count; i++) {
@@ -114,16 +119,16 @@ int main(void) {
 
         printf("%d,%f,%f\n", count, time_direct, time_fmm);
 
-        free(buffer);
-        free(px);
-        free(py);
-        free(pz);
-        free(mass);
-        free(fx);
-        free(fy);
-        free(fz);
-        free(id);
-        free(morton_codes);
+        _mm_free(buffer);
+        _mm_free(px);
+        _mm_free(py);
+        _mm_free(pz);
+        _mm_free(mass);
+        _mm_free(fx);
+        _mm_free(fy);
+        _mm_free(fz);
+        _mm_free(id);
+        _mm_free(morton_codes);
     }
 
     return 0;
