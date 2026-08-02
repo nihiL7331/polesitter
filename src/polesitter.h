@@ -41,6 +41,14 @@
 #    define PS_USE_SCALAR
 #endif
 
+#ifndef PS_RESTRICT
+#    if defined(__cplusplus) || defined(_MSC_VER)
+#        define PS_RESTRICT __restrict
+#    else
+#        define PS_RESTRICT restrict
+#    endif
+#endif
+
 // =====================================================================
 // public api
 // =====================================================================
@@ -560,10 +568,10 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
             float f_y = 0.0F;
             float f_z = 0.0F;
 
-            const float* restrict sx = arrs->x;
-            const float* restrict sy = arrs->y;
-            const float* restrict sz = arrs->z;
-            const float* restrict sm = arrs->mass;
+            const float* PS_RESTRICT sx = arrs->x;
+            const float* PS_RESTRICT sy = arrs->y;
+            const float* PS_RESTRICT sz = arrs->z;
+            const float* PS_RESTRICT sm = arrs->mass;
 
             uint32_t j = 0;
 #if defined(PS_USE_AVX2)
