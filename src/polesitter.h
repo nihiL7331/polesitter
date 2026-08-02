@@ -486,12 +486,12 @@ static void ps__fmm_l2p_pass(ps_node_t* node, const ps_particle_arrs_t* arrs) {
             uint32_t idx = node->first_particle_idx + i;
 
             // load 8 masses
-            __m256 m_vec = _mm256_load_ps(&arrs->mass[idx]);
+            __m256 m_vec = _mm256_loadu_ps(&arrs->mass[idx]);
 
             // load 8 current forces
-            __m256 cur_fx = _mm256_load_ps(&arrs->fx[idx]);
-            __m256 cur_fy = _mm256_load_ps(&arrs->fy[idx]);
-            __m256 cur_fz = _mm256_load_ps(&arrs->fz[idx]);
+            __m256 cur_fx = _mm256_loadu_ps(&arrs->fx[idx]);
+            __m256 cur_fy = _mm256_loadu_ps(&arrs->fy[idx]);
+            __m256 cur_fz = _mm256_loadu_ps(&arrs->fz[idx]);
 
             // F_x += mass * field_x
             cur_fx = _mm256_add_ps(cur_fx, _mm256_mul_ps(m_vec, f_x_vec));
@@ -582,10 +582,10 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                 uint32_t s_idx = src->first_particle_idx + j;
 
                 // load 8 source coordinates and masses
-                __m256 s_x_vec = _mm256_load_ps(&sx[s_idx]);
-                __m256 s_y_vec = _mm256_load_ps(&sy[s_idx]);
-                __m256 s_z_vec = _mm256_load_ps(&sz[s_idx]);
-                __m256 s_m_vec = _mm256_load_ps(&sm[s_idx]);
+                __m256 s_x_vec = _mm256_loadu_ps(&sx[s_idx]);
+                __m256 s_y_vec = _mm256_loadu_ps(&sy[s_idx]);
+                __m256 s_z_vec = _mm256_loadu_ps(&sz[s_idx]);
+                __m256 s_m_vec = _mm256_loadu_ps(&sm[s_idx]);
 
                 // calculate distance vectors
                 __m256 p_dx = _mm256_sub_ps(s_x_vec, t_x_vec);
