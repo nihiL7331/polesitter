@@ -249,7 +249,7 @@ static ps_result_t ps__tree_insert(ps_arena_t* arena, ps_node_t* root,
 
         if (!curr->children[octant]) {
             ps_node_t* new_node =
-                (ps_node_t*)ps_arena_alloc(arena, sizeof(ps_node_t), 16);
+                (ps_node_t*)ps_arena_alloc(arena, sizeof(ps_node_t), 32);
             if (!new_node) {
                 return PS_EOOM;
             }
@@ -704,13 +704,13 @@ static ps_result_t ps__sort_particles(ps_arena_t* arena, uint32_t* morton_codes,
 
     // borrow temp SoA buffers from the arena
     uint32_t* m_tmp =
-        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 16);
+        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 32);
     uint32_t* id_tmp =
-        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 16);
-    float* x_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
-    float* y_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
-    float* z_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
-    float* mass_tmp = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 16);
+        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 32);
+    float* x_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
+    float* y_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
+    float* z_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
+    float* mass_tmp = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
 
     if (!m_tmp || !x_tmp || !y_tmp || !z_tmp || !mass_tmp) {
         return PS_EOOM;
@@ -815,7 +815,7 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     ps__sort_particles(&ctx->arena, morton_codes, arrs);
 
     // allocate the root node
-    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 32);
     if (!ctx->root) {
         return PS_EOOM;
     }
