@@ -533,7 +533,7 @@ static void ps__fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
 
                 // add negligible value to prevent div by 0
                 float p_dist_sq =
-                    (p_dx * p_dx) + (p_dy * p_dy) + (p_dz * p_dz) + 2.0F;
+                    (p_dx * p_dx) + (p_dy * p_dy) + (p_dz * p_dz) + 0.1F;
 
                 float inv_dist  = 1.0F / sqrtf(p_dist_sq);
                 float inv_dist3 = inv_dist * inv_dist * inv_dist;
