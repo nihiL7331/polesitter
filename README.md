@@ -141,8 +141,8 @@ The solver executes physics ticks in four distinct passes over the Z-ordered oct
 
 ## Benchmarks
 
-![Linear Naive/FMM comparison graph.](/docs/performance_graph.png)
-![Logarithmic Naive/FMM comparison graph.](/docs/performance_graph_log.png)
+![Linear Naive/FMM comparison graph.](/docs/performance_graph.svg)
+![Logarithmic Naive/FMM comparison graph.](/docs/performance_graph_log.svg)
 
 ## License
 
