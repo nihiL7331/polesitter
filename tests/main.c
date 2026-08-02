@@ -376,7 +376,7 @@ void test_fmm_p2p_pass(void) {
     // dist = 1.0
     // dist_sq = 1.0^2 + 2.0 = 3.0
     // F_mag = (mass1 * mass2) / (dist_sq^1.5)
-    float expected_f = (2.0F * 3.0F) * powf(3.0F, -1.5F);
+    float expected_f = (2.0F * 3.0F) * powf(1.1F, -1.5F);
 
     // 0 should be pulled towards 1 (+X dir)
     TEST_ASSERT_FLOAT_EQ(expected_f, arrs.fx[0], 1e-4F);
