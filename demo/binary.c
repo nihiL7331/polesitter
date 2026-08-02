@@ -7,7 +7,7 @@
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
-#define PARTICLE_COUNT     20000
+#define PARTICLE_COUNT     5000
 #define BLACKHOLE_MASS     1000.0F
 #define ARENA_SIZE         (1024ULL * 1024ULL * 256ULL)
 #define MAX_EXPECTED_SPEED 20
@@ -34,10 +34,10 @@ void draw(void);
 void init_raylib(void) {
     const int screenWidth  = 1080;
     const int screenHeight = 1080;
-    InitWindow(screenWidth, screenHeight, "polesitter demo");
+    InitWindow(screenWidth, screenHeight, "polesitter binary demo");
     SetTargetFPS(60);
 
-    camera.position   = (Vector3){0.0F, 60.0F, 60.0F};
+    camera.position   = (Vector3){0.0F, 80.0F, 80.0F};
     camera.target     = (Vector3){0.0F, 0.0F, 0.0F};
     camera.up         = (Vector3){0.0F, 1.0F, 0.0F};
     camera.fovy       = 45.0F;
@@ -67,31 +67,50 @@ void* init_polesitter(void) {
 }
 
 void init_particles(void) {
-    for (int i = 0; i < PARTICLE_COUNT; i++) {
-        float angle  = (float)GetRandomValue(0, 360) * DEG2RAD;
-        float radius = (float)GetRandomValue(1, 1000) / 1000.0F;
-        radius       = radius * radius * 30.0F;
-
-        px[i] = cosf(angle) * radius;
-        py[i] = ((float)GetRandomValue(-100, 100) / 100.0F) *
-                (2.0F / (radius + 1.0F));
-        pz[i] = sinf(angle) * radius;
-
-        mass[i] = 0.1F;
-
-        float v_mag = sqrtf(BLACKHOLE_MASS / (radius + 1.0F));
-        vx[i]       = -sinf(angle) * v_mag;
-        vy[i]       = 0.0F;
-        vz[i]       = cosf(angle) * v_mag;
-    }
-
-    px[0]   = 0.0F;
+    px[0]   = -15.0F;
     py[0]   = 0.0F;
     pz[0]   = 0.0F;
     vx[0]   = 0.0F;
     vy[0]   = 0.0F;
-    vz[0]   = 0.0F;
+    vz[0]   = 3.0F;
     mass[0] = BLACKHOLE_MASS;
+
+    px[1]   = 15.0F;
+    py[1]   = 0.0F;
+    pz[1]   = 0.0F;
+    vx[1]   = 0.0F;
+    vy[1]   = 0.0F;
+    vz[1]   = -3.0F;
+    mass[1] = BLACKHOLE_MASS;
+
+    int half_p = PARTICLE_COUNT / 2;
+    for (int i = 2; i < PARTICLE_COUNT; i++) {
+        int bh_idx = (i < half_p) ? 0 : 1;
+
+        float angle  = (float)GetRandomValue(0, 360) * DEG2RAD;
+        float radius = (float)GetRandomValue(1, 1000) / 1000.0F;
+        radius       = radius * radius * 15.0F;
+
+        float local_px = cosf(angle) * radius;
+        float local_py = ((float)GetRandomValue(-100, 100) / 100.0F) *
+                         (1.0F / (radius + 1.0F));
+        float local_pz = sinf(angle) * radius;
+
+        px[i] = px[bh_idx] + local_px;
+        py[i] = py[bh_idx] + local_py;
+        pz[i] = pz[bh_idx] + local_pz;
+
+        mass[i] = 0.1F;
+
+        float v_mag    = sqrtf(BLACKHOLE_MASS / (radius + 1.0F));
+        float local_vx = -sinf(angle) * v_mag;
+        float local_vy = 0.0F;
+        float local_vz = cosf(angle) * v_mag;
+
+        vx[i] = vx[bh_idx] + local_vx;
+        vy[i] = vy[bh_idx] + local_vy;
+        vz[i] = vz[bh_idx] + local_vz;
+    }
 }
 
 int main(void) {
@@ -113,6 +132,26 @@ int main(void) {
 }
 
 void update(void) {
+    Vector3 bh1 = {0}, bh2 = {0};
+    int     found_cnt = 0;
+
+    for (int i = 0; i < PARTICLE_COUNT; ++i) {
+        if (mass[i] != BLACKHOLE_MASS) {
+            continue;
+        }
+
+        if (found_cnt == 0) {
+            bh1 = (Vector3){px[i], py[i], pz[i]};
+            found_cnt++;
+        } else {
+            bh2 = (Vector3){px[i], py[i], pz[i]};
+            break;
+        }
+    }
+
+    camera.target = (Vector3){(bh1.x + bh2.x) / 2.0F, (bh1.y + bh2.y) / 2.0F,
+                              (bh1.z + bh2.z) / 2.0F};
+
     UpdateCamera(&camera, CAMERA_ORBITAL);
 
     ps_arena_clear(&ctx->arena);
@@ -148,19 +187,9 @@ void update(void) {
         vz[i] = tmp_vz[i];
     }
 
-    float dt = 0.0333F * 0.025F;
+    float dt = GetFrameTime();
 
     for (int i = 0; i < PARTICLE_COUNT; i++) {
-        if (mass[i] == BLACKHOLE_MASS) {
-            vx[i] = 0.0F;
-            vy[i] = 0.0F;
-            vz[i] = 0.0F;
-            px[i] = 0.0F;
-            py[i] = 0.0F;
-            pz[i] = 0.0F;
-            continue;
-        }
-
         if (mass[i] <= 0.0F) {
             continue;
         }
@@ -182,7 +211,7 @@ void update(void) {
     }
 
     if (frame_counter++ == 30 * 40) {
-        CloseWindow();
+        // CloseWindow();
     }
 }
 
@@ -190,11 +219,20 @@ void draw(void) {
     ClearBackground((Color){8, 10, 22, 255});
     BeginMode3D(camera);
 
-    DrawSphere((Vector3){0, 0, 0}, 0.7F, BLACK);
+    // Draw the black holes wherever they currently are
+    for (int i = 0; i < PARTICLE_COUNT; i++) {
+        if (mass[i] >= BLACKHOLE_MASS) {
+            DrawSphere((Vector3){px[i], py[i], pz[i]}, 0.7F, BLACK);
+        }
+    }
 
     BeginBlendMode(BLEND_ADDITIVE);
 
     for (int i = 0; i < PARTICLE_COUNT; i++) {
+        if (mass[i] >= BLACKHOLE_MASS) {
+            continue;
+        }
+
         float speed =
             sqrtf((vx[i] * vx[i]) + (vy[i] * vy[i]) + (vz[i] * vz[i]));
 
@@ -220,5 +258,5 @@ void draw(void) {
     EndBlendMode();
     EndMode3D();
 
-    TakeScreenshot(TextFormat("frames/frame_%04d.png", frame_counter));
+    // TakeScreenshot(TextFormat("frames/frame_%04d.png", frame_counter));
 }
