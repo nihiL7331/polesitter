@@ -1,5 +1,4 @@
 #include <math.h>
-#include <mm_malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +6,16 @@
 
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
+
+#if defined(_MSC_VER)
+#    include <malloc.h>
+#    define ALIGNED_MALLOC(size, align) _aligned_malloc((size), (align))
+#    define ALIGNED_FREE(ptr)           _aligned_free((ptr))
+#else
+#    include <mm_malloc.h>
+#    define ALIGNED_MALLOC(size, align) _mm_malloc((size), (align))
+#    define ALIGNED_FREE(ptr)           _mm_free((ptr))
+#endif
 
 #define ARENA_SIZE (1024ULL * 1024ULL * 128ULL)
 
@@ -63,15 +72,15 @@ int main(void) {
     for (int t = 0; t < num_tests; ++t) {
         int count = test_sizes[t];
 
-        float*    px           = _mm_malloc(count * sizeof(float), 32);
-        float*    py           = _mm_malloc(count * sizeof(float), 32);
-        float*    pz           = _mm_malloc(count * sizeof(float), 32);
-        float*    mass         = _mm_malloc(count * sizeof(float), 32);
-        float*    fx           = _mm_malloc(count * sizeof(float), 32);
-        float*    fy           = _mm_malloc(count * sizeof(float), 32);
-        float*    fz           = _mm_malloc(count * sizeof(float), 32);
-        uint32_t* id           = _mm_malloc(count * sizeof(uint32_t), 32);
-        uint32_t* morton_codes = _mm_malloc(count * sizeof(uint32_t), 32);
+        float*    px           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    py           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    pz           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    mass         = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    fx           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    fy           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        float*    fz           = ALIGNED_MALLOC(count * sizeof(float), 32);
+        uint32_t* id           = ALIGNED_MALLOC(count * sizeof(uint32_t), 32);
+        uint32_t* morton_codes = ALIGNED_MALLOC(count * sizeof(uint32_t), 32);
         memset(fx, 0, count * sizeof(float));
         memset(fy, 0, count * sizeof(float));
         memset(fz, 0, count * sizeof(float));
@@ -119,16 +128,16 @@ int main(void) {
 
         printf("%d,%f,%f\n", count, time_direct, time_fmm);
 
-        _mm_free(buffer);
-        _mm_free(px);
-        _mm_free(py);
-        _mm_free(pz);
-        _mm_free(mass);
-        _mm_free(fx);
-        _mm_free(fy);
-        _mm_free(fz);
-        _mm_free(id);
-        _mm_free(morton_codes);
+        ALIGNED_FREE(buffer);
+        ALIGNED_FREE(px);
+        ALIGNED_FREE(py);
+        ALIGNED_FREE(pz);
+        ALIGNED_FREE(mass);
+        ALIGNED_FREE(fx);
+        ALIGNED_FREE(fy);
+        ALIGNED_FREE(fz);
+        ALIGNED_FREE(id);
+        ALIGNED_FREE(morton_codes);
     }
 
     return 0;
