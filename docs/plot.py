@@ -44,7 +44,7 @@ ax.set_xlim(left=0)
 ax.set_ylim(bottom=0)
 
 plt.tight_layout()
-plt.savefig('performance_graph.png', dpi=300, transparent=True)
+plt.savefig('performance_graph.svg', dpi=300, transparent=True)
 
 fig_log, ax_log = plt.subplots(figsize=(8, 5))
 
@@ -65,4 +65,4 @@ ax_log.grid(True, which="both", linestyle='--', alpha=0.3)
 ax_log.legend(fontsize=11, loc='upper left')
 
 plt.tight_layout()
-plt.savefig('performance_graph_log.png', dpi=300, transparent=True)
+plt.savefig('performance_graph_log.svg', dpi=300, transparent=True)

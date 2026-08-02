@@ -8,13 +8,17 @@
 #include "../src/polesitter.h"
 
 #if defined(_MSC_VER)
-#    include <malloc.h>
-#    define ALIGNED_MALLOC(size, align) _aligned_malloc((size), (align))
-#    define ALIGNED_FREE(ptr)           _aligned_free((ptr))
+
+#include <malloc.h>
+#define ALIGNED_MALLOC(size, align) _aligned_malloc((size), (align))
+#define ALIGNED_FREE(ptr)           _aligned_free((ptr))
+
 #else
-#    include <mm_malloc.h>
-#    define ALIGNED_MALLOC(size, align) _mm_malloc((size), (align))
-#    define ALIGNED_FREE(ptr)           _mm_free((ptr))
+
+#include <mm_malloc.h>
+#define ALIGNED_MALLOC(size, align) _mm_malloc((size), (align))
+#define ALIGNED_FREE(ptr)           _mm_free((ptr))
+
 #endif
 
 #define ARENA_SIZE (1024ULL * 1024ULL * 128ULL)

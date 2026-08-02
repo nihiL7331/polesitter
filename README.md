@@ -108,7 +108,6 @@ int main(void) {
     free(memory_block);
     return 0;
 }
-
 ```
 
 ## Pipeline
@@ -141,8 +140,8 @@ The solver executes physics ticks in four distinct passes over the Z-ordered oct
 
 ## Benchmarks
 
-![Linear Naive/FMM comparison graph.](/docs/performance_graph.png)
-![Logarithmic Naive/FMM comparison graph.](/docs/performance_graph_log.png)
+![Linear Naive/FMM comparison graph.](/docs/performance_graph.svg)
+![Logarithmic Naive/FMM comparison graph.](/docs/performance_graph_log.svg)
 
 ## License
 
@@ -150,4 +149,7 @@ MIT License.
 
 ## Sources
 
-- [The Fastest Gravity Algorithm You've Never Heard Of by Keyframe Codes](https://youtu.be/FhMftauQZqU?si=E3nmNp6FuSqhn2OD)
+- [The Fastest Gravity Algorithm You've Never Heard Of, Keyframe Codes](https://youtu.be/FhMftauQZqU?si=E3nmNp6FuSqhn2OD)
+- [Fast multipole method, Wikipedia](https://en.wikipedia.org/wiki/Fast_multipole_method)
+- [Introduction to FFM, Long Chen](https://www.math.uci.edu/~chenlong/226/FMMsimple.pdf)
+- [A short course on fast multipole methods, Rick Beatson; Leslie Greengard](https://math.nyu.edu/~greengar/shortcourse_fmm.pdf)
