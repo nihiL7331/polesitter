@@ -229,9 +229,10 @@ typedef void* (*ps_thrd_func_t)(void*);
 // =====================================================================
 
 typedef enum {
-    PS_OK     = 0,
-    PS_EOOM   = -1, // out of memory
-    PS_EINVAL = -2, // invalid argument
+    PS_OK        = 0,
+    PS_EOOM      = -1, // out of memory
+    PS_EINVAL    = -2, // invalid argument
+    PS_THRD_FAIL = -3, // thread creation failed
 } ps_result_t;
 
 typedef struct ps_context ps_context_t;
