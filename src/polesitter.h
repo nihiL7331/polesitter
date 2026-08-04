@@ -456,6 +456,22 @@ static inline void ps_thrd_join(ps_thrd_t t) {
 
 #endif
 
+static void ps_impl_pool_submit(ps_thrd_pool_t* pool, ps_job_t job) {
+    ps_mtx_lock(&pool->lock);
+
+    // block if buffer is full
+    while (pool->cnt == PS_MAX_JOBS && !pool->shutdown_flag) {
+        ps_cond_wait(&pool->space_cond, &pool->lock);
+    }
+
+    // enqueue
+    pool->queue[pool->tl] = job;
+    pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
+    pool->cnt++;
+
+    ps_cond_signal(&pool->work_cond);
+    ps_mtx_unlock(&pool->lock);
+}
 #endif // PS_MULTITHREADING
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
