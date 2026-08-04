@@ -161,7 +161,7 @@ static double run_accuracy_case(const char* name, size_t count,
         free(ref_fy);
         free(ref_fz);
         free(arena);
-        return INFINITY;
+        return -1.0;
     }
 
     fill(x, y, z, mass, id, count);
@@ -187,7 +187,7 @@ static double run_accuracy_case(const char* name, size_t count,
         free(ref_fy);
         free(ref_fz);
         free(arena);
-        return INFINITY;
+        return -1.0;
     }
 
     float min_b = 0.0F;
