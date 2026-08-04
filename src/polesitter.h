@@ -472,6 +472,18 @@ static void ps_impl_pool_submit(ps_thrd_pool_t* pool, ps_job_t job) {
     ps_cond_signal(&pool->work_cond);
     ps_mtx_unlock(&pool->lock);
 }
+
+static void ps_impl_pool_wait(ps_thrd_pool_t* pool) {
+    ps_mtx_lock(&pool->lock);
+
+    // main thrd blocks til queue is empty & no workers are active
+    while (pool->cnt > 0 || pool->active_jobs > 0) {
+        ps_cond_wait(&pool->done_cond, &pool->lock);
+    }
+
+    ps_mtx_unlock(&pool->lock);
+}
+
 #endif // PS_MULTITHREADING
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
