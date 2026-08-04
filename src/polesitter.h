@@ -526,6 +526,34 @@ static PS_THRD_RET_TYPE ps_impl_worker_loop(void* arg) {
     return PS_THRD_RET_VAL;
 }
 
+static int ps_impl_pool_init(ps_thrd_pool_t* pool, uint32_t num_thrds) {
+    pool->hd            = 0;
+    pool->tl            = 0;
+    pool->cnt           = 0;
+    pool->active_jobs   = 0;
+    pool->shutdown_flag = 0;
+
+    pool->thrd_cnt = num_thrds;
+    if (pool->thrd_cnt > PS_MAX_THRDS) {
+        pool->thrd_cnt = PS_MAX_THRDS;
+    } else if (pool->thrd_cnt < 1) {
+        pool->thrd_cnt = 1;
+    }
+
+    ps_mtx_init(&pool->lock);
+    ps_cond_init(&pool->work_cond);
+    ps_cond_init(&pool->space_cond);
+    ps_cond_init(&pool->done_cond);
+
+    for (uint32_t i = 0; i < pool->thrd_cnt; ++i) {
+        if (ps_thrd_create(&pool->thrds[i], ps_impl_worker_loop, pool) != 0) {
+            return PS_THRD_FAIL;
+        }
+    }
+
+    return PS_OK;
+}
+
 #endif // PS_MULTITHREADING
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
