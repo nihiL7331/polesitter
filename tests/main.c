@@ -7,6 +7,8 @@
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
+#define THETA 3.4641F // sqrt of 12
+
 static void ps_assert(int cond, const char* expr_str, const char* msg,
                       const char* file, int line) {
     if (!cond) {
@@ -100,10 +102,10 @@ void test_octree_insertion(void) {
     void* buffer = malloc(1024ULL * 4);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
-    ps_context_t* ctx    = NULL;
-    ps_config_t   config = {buffer, 1024ULL * 4};
+    ps_context_t* ctx = NULL;
+    ps_config_t   cfg = {buffer, 1024ULL * 4, THETA};
 
-    ps_result_t res = ps_init(&ctx, &config);
+    ps_result_t res = ps_init(&ctx, &cfg);
     TEST_ASSERT(res == PS_OK, "Failed to initialize context");
     TEST_ASSERT(ctx != NULL, "Context pointer is null");
 
@@ -152,7 +154,7 @@ void test_radix_sort(void) {
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 4};
+    ps_config_t   cfg = {buffer, 1024ULL * 4, THETA};
     ps_init(&ctx, &cfg);
 
     uint32_t morton_codes[4] = {999, 10, 500, 42};
@@ -187,7 +189,7 @@ void test_fmm_upward_pass(void) {
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 64};
+    ps_config_t   cfg = {buffer, 1024ULL * 64, THETA};
     ps_init(&ctx, &cfg);
 
     float    x[2]    = {2.0F, -1.0F};
@@ -231,7 +233,7 @@ void test_fmm_interaction_pass(void) {
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 64};
+    ps_config_t   cfg = {buffer, 1024ULL * 64, THETA};
     ps_init(&ctx, &cfg);
 
     ps_node_t* node_a =
@@ -253,7 +255,7 @@ void test_fmm_interaction_pass(void) {
 
     node_b->multipole[0] = 1.0F;
 
-    ps_impl_fmm_interaction_pass(node_a, node_b);
+    ps_impl_fmm_interaction_pass(node_a, node_b, THETA);
 
     // vector from A to B: dx=10, dy=10, dz=10
     // softened dist_sq = 300.1, dist ~= 17.3234
@@ -273,7 +275,7 @@ void test_fmm_downward_pass(void) {
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 64};
+    ps_config_t   cfg = {buffer, 1024ULL * 64, THETA};
     ps_init(&ctx, &cfg);
 
     // manually allocate and send the root
@@ -314,7 +316,7 @@ void test_fmm_l2p_pass(void) {
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 4};
+    ps_config_t   cfg = {buffer, 1024ULL * 4, THETA};
     ps_init(&ctx, &cfg);
 
     float x[1] = {0.0F}, y[1] = {0.0F}, z[1] = {0.0F}, mass[1] = {2.5F};
@@ -348,7 +350,7 @@ void test_fmm_p2p_pass(void) {
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 4};
+    ps_config_t   cfg = {buffer, 1024ULL * 4, THETA};
     ps_init(&ctx, &cfg);
 
     // 2 particles offset by 1.0 unit on the x axis

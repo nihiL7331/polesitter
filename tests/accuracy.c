@@ -8,6 +8,7 @@
 
 #define ARENA_SIZE   (1024ULL * 1024ULL * 32ULL)
 #define SOFTENING_SQ 0.1F
+#define THETA        3.4641F // sqrt of 12
 
 static int g_failures = 0;
 
@@ -89,7 +90,7 @@ static void run_dipole_sign_test(void) {
     source.multipole[0] = 1.0F;
     source.multipole[1] = 1.0F;
 
-    ps_impl_fmm_interaction_pass(&target, &source);
+    ps_impl_fmm_interaction_pass(&target, &source, THETA);
 
     /*
      * First-order softened expansion for R=100 and delta=+1 is
@@ -169,7 +170,7 @@ static double run_accuracy_case(const char* name, size_t count,
 
     ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, id, count};
     ps_context_t*      ctx  = NULL;
-    ps_config_t        cfg  = {arena, ARENA_SIZE};
+    ps_config_t        cfg  = {arena, ARENA_SIZE, THETA};
 
     if (ps_init(&ctx, &cfg) != PS_OK) {
         (void)fprintf(stderr, "[FAIL] %s: ps_init failed\n", name);
