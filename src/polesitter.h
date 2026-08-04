@@ -554,6 +554,22 @@ static int ps_impl_pool_init(ps_thrd_pool_t* pool, uint32_t num_thrds) {
     return PS_OK;
 }
 
+static void ps_impl_pool_destroy(ps_thrd_pool_t* pool) {
+    ps_mtx_lock(&pool->lock);
+    pool->shutdown_flag = 1;
+    ps_cond_bcast(&pool->work_cond);
+    ps_mtx_unlock(&pool->lock);
+
+    for (uint32_t i = 0; i < pool->thrd_cnt; ++i) {
+        ps_thrd_join(pool->thrds[i]);
+    }
+
+    ps_mtx_destroy(&pool->lock);
+    ps_cond_destroy(&pool->work_cond);
+    ps_cond_destroy(&pool->space_cond);
+    ps_cond_destroy(&pool->done_cond);
+}
+
 #endif // PS_MULTITHREADING
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
