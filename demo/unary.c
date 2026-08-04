@@ -51,7 +51,7 @@ void* init_polesitter(void) {
         return NULL;
     }
 
-    ps_config_t cfg = {buffer, ARENA_SIZE, THETA};
+    ps_config_t cfg = {buffer, ARENA_SIZE, THETA, 1};
     ps_init(&ctx, &cfg);
 
     arrs.x    = px;
@@ -116,7 +116,7 @@ int main(void) {
 void update(void) {
     UpdateCamera(&camera, CAMERA_ORBITAL);
 
-    ps_arena_clear(&ctx->arena);
+    ps_impl_arena_clear(&ctx->arenas[0]);
 
     for (int i = 0; i < PARTICLE_COUNT; ++i) {
         id[i] = i;
