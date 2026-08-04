@@ -484,6 +484,48 @@ static void ps_impl_pool_wait(ps_thrd_pool_t* pool) {
     ps_mtx_unlock(&pool->lock);
 }
 
+static PS_THRD_RET_TYPE ps_impl_worker_loop(void* arg) {
+    ps_thrd_pool_t* pool = (ps_thrd_pool_t*)arg;
+
+    while (1) {
+        ps_mtx_lock(&pool->lock);
+
+        while (pool->cnt == 0 && !pool->shutdown_flag) {
+            ps_cond_wait(&pool->work_cond, &pool->lock);
+        }
+
+        if (pool->shutdown_flag && pool->cnt == 0) {
+            ps_mtx_unlock(&pool->lock);
+            break;
+        }
+
+        // dequeue
+        ps_job_t job = pool->queue[pool->hd];
+        pool->hd     = (pool->hd + 1) % PS_MAX_JOBS;
+        pool->cnt--;
+        pool->active_jobs++;
+
+        // signal main thrd that there's space in queue
+        ps_cond_signal(&pool->space_cond);
+        ps_mtx_unlock(&pool->lock);
+
+        // TODO: exec
+        (void)job;
+
+        // mark done
+        ps_mtx_lock(&pool->lock);
+        pool->active_jobs--;
+
+        if (pool->cnt == 0 && pool->active_jobs == 0) {
+            ps_cond_signal(&pool->done_cond);
+        }
+
+        ps_mtx_unlock(&pool->lock);
+    }
+
+    return PS_THRD_RET_VAL;
+}
+
 #endif // PS_MULTITHREADING
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
