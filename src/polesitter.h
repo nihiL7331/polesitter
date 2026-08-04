@@ -192,6 +192,38 @@
 
 #endif // PS_RESTRICT
 
+#define PS_MULTITHREADING
+#ifdef PS_MULTITHREADING
+
+#ifdef _WIN32
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+typedef HANDLE             ps_thrd_t;
+typedef CRITICAL_SECTION   ps_mtx_t;
+typedef CONDITION_VARIABLE ps_cond_t;
+typedef DWORD(WINAPI* ps_thrd_func_t)(void*);
+
+#define PS_THRD_RET_TYPE DWORD WINAPI
+#define PS_THRD_RET_VAL  0
+
+#else // POSIX
+
+#include <pthread.h>
+
+typedef pthread_t       ps_thrd_t;
+typedef pthread_mutex_t ps_mtx_t;
+typedef pthread_cond_t  ps_cond_t;
+typedef void* (*ps_thrd_func_t)(void*);
+
+#define PS_THRD_RET_TYPE void*
+#define PS_THRD_RET_VAL  NULL
+
+#endif
+
+#endif // PS_MULTITHREADING
+
 // =====================================================================
 // public api
 // =====================================================================
@@ -282,9 +314,148 @@ struct ps_context {
     float      theta;
 };
 
+#ifdef PS_MULTITHREADING
+
+#ifndef PS_MAX_THREADS
+#define PS_MAX_THREADS 32
+#endif // PS_MAX_THREADS
+
+#ifndef PS_MAX_JOBS
+#define PS_MAX_JOBS 512
+#endif // PS_MAX_JOBS
+
+typedef enum {
+    PS_JOB_EXIT = 0,
+    // TODO: add passes/radix related job types here
+} ps_job_type_t;
+
+typedef struct {
+    ps_job_type_t type;
+    uint32_t      thrd_id; // which worker is executing this
+
+    union {
+        // for fmm passes
+        struct {
+            ps_node_t*                target;
+            ps_node_t*                src;
+            const ps_particle_arrs_t* arrs;
+        } fmm;
+
+        // for radix/tree
+        struct {
+            size_t start_idx;
+            size_t end_idx;
+        } array;
+    } data;
+} ps_job_t;
+
+typedef struct {
+    ps_thrd_t thrds[PS_MAX_THREADS];
+    uint32_t  thrd_cnt;
+
+    ps_job_t queue[PS_MAX_JOBS];
+    int      hd;
+    int      tl;
+    int      cnt;
+    int      active_jobs;
+    int      shutdown_flag;
+
+    ps_mtx_t  lock;
+    ps_cond_t work_cond;  // workers wait for jobs
+    ps_cond_t space_cond; // main thread waits for space in queue
+    ps_cond_t done_cond;  // main thread waits for active_jobs == 0
+} ps_thrd_pool_t;
+
+#endif // PS_MULTITHREADING
+
 // ---------------------------------------------------------------------
 // internal functions
 // ---------------------------------------------------------------------
+
+// separated from the above for clarity purposes
+#ifdef PS_MULTITHREADING
+
+#ifdef _WIN32
+
+static inline void ps_mtx_init(ps_mtx_t* m) {
+    InitializeCriticalSection(m);
+}
+static inline void ps_mtx_destroy(ps_mtx_t* m) {
+    DeleteCriticalSection(m);
+}
+static inline void ps_mtx_lock(ps_mtx_t* m) {
+    EnterCriticalSection(m);
+}
+static inline void ps_mtx_unlock(ps_mtx_t* m) {
+    LeaveCriticalSection(m);
+}
+
+static inline void ps_cond_init(ps_cond_t* c) {
+    InitializeConditionVariable(c);
+}
+static inline void ps_cond_destroy(ps_cond_t* c) {
+    (void)c; /* no-op */
+}
+static inline void ps_cond_wait(ps_cond_t* c, ps_mtx_t* m) {
+    SleepConditionVariableCS(c, m, INFINITE);
+}
+static inline void ps_cond_signal(ps_cond_t* c) {
+    WakeConditionVariable(c);
+}
+static inline void ps_cond_bcast(ps_cond_t* c) {
+    WakeAllConditionVariable(c);
+}
+
+static inline int ps_thrd_create(ps_thrd_t* t, ps_thrd_func_t f, void* a) {
+    *t = CreateThread(NULL, 0, f, a, 0, NULL);
+    return (*t != NULL) ? 0 : -1;
+}
+static inline void ps_thrd_join(ps_thrd_t t) {
+    WaitForSingleObject(t, INFINITE);
+    CloseHandle(t);
+}
+
+#else // POSIX
+
+static inline void ps_mtx_init(ps_mtx_t* m) {
+    pthread_mutex_init(m, NULL);
+}
+static inline void ps_mtx_destroy(ps_mtx_t* m) {
+    pthread_mutex_destroy(m);
+}
+static inline void ps_mtx_lock(ps_mtx_t* m) {
+    pthread_mutex_lock(m);
+}
+static inline void ps_mtx_unlock(ps_mtx_t* m) {
+    pthread_mutex_unlock(m);
+}
+
+static inline void ps_cond_init(ps_cond_t* c) {
+    pthread_cond_init(c, NULL);
+}
+static inline void ps_cond_destroy(ps_cond_t* c) {
+    pthread_cond_destroy(c);
+}
+static inline void ps_cond_wait(ps_cond_t* c, ps_mtx_t* m) {
+    pthread_cond_wait(c, m);
+}
+static inline void ps_cond_signal(ps_cond_t* c) {
+    pthread_cond_signal(c);
+}
+static inline void ps_cond_bcast(ps_cond_t* c) {
+    pthread_cond_broadcast(c);
+}
+
+static inline int ps_thrd_create(ps_thrd_t* t, ps_thrd_func_t f, void* a) {
+    return pthread_create(t, NULL, f, a);
+}
+static inline void ps_thrd_join(ps_thrd_t t) {
+    pthread_join(t, NULL);
+}
+
+#endif
+
+#endif // PS_MULTITHREADING
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
 static uint32_t ps_impl_expand_bits(uint32_t v) {
