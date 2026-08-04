@@ -49,7 +49,7 @@ void direct_nbody_baseline(const ps_particle_arrs_t* arrs) {
             float p_dz = arrs->z[j] - t_z;
 
             float p_dist_sq =
-                (p_dx * p_dx) + (p_dy * p_dy) + (p_dz * p_dz) + 2.0F;
+                (p_dx * p_dx) + (p_dy * p_dy) + (p_dz * p_dz) + 0.1F;
             float inv_dist  = 1.0F / sqrtf(p_dist_sq);
             float inv_dist3 = inv_dist * inv_dist * inv_dist;
 
@@ -114,7 +114,7 @@ int main(void) {
 
         void*         buffer = malloc(ARENA_SIZE);
         ps_context_t* ctx    = NULL;
-        ps_config_t   cfg    = {buffer, ARENA_SIZE};
+        ps_config_t   cfg    = {buffer, ARENA_SIZE, 1.0F};
         ps_init(&ctx, &cfg);
 
         clock_t start_fmm = clock();

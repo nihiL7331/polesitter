@@ -164,7 +164,6 @@
 #define POLESITTER_H
 
 #include <float.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -208,6 +207,7 @@ typedef struct ps_context ps_context_t;
 typedef struct {
     void*  buff;      // ram provided by host
     size_t buff_size; // total size in B
+    float  theta;     // MAC threshold. 0.0F defaults to 1.0F
 } ps_config_t;
 
 typedef struct {
@@ -238,7 +238,6 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 #endif // POLESITTER_H
 
-#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -280,6 +279,7 @@ typedef struct ps_node {
 struct ps_context {
     ps_arena_t arena;
     ps_node_t* root;
+    float      theta;
 };
 
 // ---------------------------------------------------------------------
@@ -509,7 +509,8 @@ static void ps_impl_fmm_upward_pass(ps_node_t*                node,
 
 // pass 2
 // m2l dual-tree traversal to find well-separated nodes and translate expansions
-static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
+static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src,
+                                         float theta) {
     if (!target || !src) {
         return;
     }
@@ -519,17 +520,14 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
     float dz      = src->z - target->z;
     float dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
 
-    // multipole acceptance criterion
-    // if dist > sum of half-widths, they are well-separated
-    // theta dictates accuracy vs speed
-    float theta  = 1.0F;
     float hw_sum = target->half_width + src->half_width;
 
     // well-separated
     if (dist_sq > (theta * theta) * (hw_sum * hw_sum)) {
-        float dist   = sqrtf(dist_sq);
-        float inv_r3 = 1.0F / (dist * dist_sq);
-        float inv_r5 = inv_r3 / dist_sq;
+        float soft_dist_sq = dist_sq + 0.1F;
+        float dist         = sqrtf(soft_dist_sq);
+        float inv_r3       = 1.0F / (dist * soft_dist_sq);
+        float inv_r5       = inv_r3 / soft_dist_sq;
 
         float m0 = src->multipole[0];
         float mx = src->multipole[1];
@@ -545,9 +543,9 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
         float m_dot_r      = (mx * dx) + (my * dy) + (mz * dz);
         float dipole_coeff = 3.0F * m_dot_r * inv_r5;
 
-        float force_dip_x = (dx * dipole_coeff) - (mx * inv_r3);
-        float force_dip_y = (dy * dipole_coeff) - (my * inv_r3);
-        float force_dip_z = (dz * dipole_coeff) - (mz * inv_r3);
+        float force_dip_x = (mx * inv_r3) - (dx * dipole_coeff);
+        float force_dip_y = (my * inv_r3) - (dy * dipole_coeff);
+        float force_dip_z = (mz * inv_r3) - (dz * dipole_coeff);
 
         // accumulate into target's local expansion
         target->local[1] += force_m0_x + force_dip_x;
@@ -566,12 +564,12 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
     if (target->is_leaf) {
         // target is as small as possible, open the src
         for (int i = 0; i < 8; ++i) {
-            ps_impl_fmm_interaction_pass(target, src->children[i]);
+            ps_impl_fmm_interaction_pass(target, src->children[i], theta);
         }
     } else if (src->is_leaf) {
         // src is as small as possible, open the target
         for (int i = 0; i < 8; ++i) {
-            ps_impl_fmm_interaction_pass(target->children[i], src);
+            ps_impl_fmm_interaction_pass(target->children[i], src, theta);
         }
     } else {
         // subdivide both and pair all 64 permutations
@@ -586,7 +584,7 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
                 }
 
                 ps_impl_fmm_interaction_pass(target->children[i],
-                                             src->children[j]);
+                                             src->children[j], theta);
             }
         }
     }
@@ -724,7 +722,7 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
     float hw_sum = target->half_width + src->half_width;
 
     // if well-separated M2L already handled it
-    if (dist_sq > (theta * theta) * (hw_sum * hw_sum)) {
+    if (dist_sq > 12.0F * (theta * theta) * (hw_sum * hw_sum)) {
         return;
     }
 
@@ -814,7 +812,7 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
             float32x4_t t_x_vec = vdupq_n_f32(t_x);
             float32x4_t t_y_vec = vdupq_n_f32(t_y);
             float32x4_t t_z_vec = vdupq_n_f32(t_z);
-            float32x4_t eps_vec = vdupq_n_f32(2.0F);
+            float32x4_t eps_vec = vdupq_n_f32(0.1F);
 
             // accumulators for target particles forces
             float32x4_t f_x_vec = vdupq_n_f32(0.0F);
@@ -1039,6 +1037,7 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
     // place ctx at beginning of buffer
     ps_context_t* ctx = (ps_context_t*)conf->buff;
     ctx->root         = NULL;
+    ctx->theta        = (conf->theta > 0.0F) ? conf->theta : 1.0F;
 
     // arena takes the rest
     size_t arena_start = ps_align_forward(sizeof(ps_context_t), 16);
@@ -1090,7 +1089,7 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     ps_impl_fmm_upward_pass(ctx->root, arrs);
 
     // interaction pass (m2l)
-    ps_impl_fmm_interaction_pass(ctx->root, ctx->root);
+    ps_impl_fmm_interaction_pass(ctx->root, ctx->root, ctx->theta);
 
     // downward pass (l2l)
     ps_impl_fmm_downward_pass(ctx->root);
