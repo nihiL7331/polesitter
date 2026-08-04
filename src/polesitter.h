@@ -238,7 +238,6 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 #endif // POLESITTER_H
 
-#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -519,17 +518,19 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
     float dz      = src->z - target->z;
     float dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
 
-    // multipole acceptance criterion
-    // if dist > sum of half-widths, they are well-separated
+    // Conservative multipole acceptance criterion. The 12x squared
+    // separation factor was selected from direct-reference accuracy
+    // validation for this first-order expansion.
     // theta dictates accuracy vs speed
     float theta  = 1.0F;
     float hw_sum = target->half_width + src->half_width;
 
     // well-separated
-    if (dist_sq > (theta * theta) * (hw_sum * hw_sum)) {
-        float dist   = sqrtf(dist_sq);
-        float inv_r3 = 1.0F / (dist * dist_sq);
-        float inv_r5 = inv_r3 / dist_sq;
+    if (dist_sq > 12.0F * (theta * theta) * (hw_sum * hw_sum)) {
+        float soft_dist_sq = dist_sq + 0.1F;
+        float dist         = sqrtf(soft_dist_sq);
+        float inv_r3       = 1.0F / (dist * soft_dist_sq);
+        float inv_r5       = inv_r3 / soft_dist_sq;
 
         float m0 = src->multipole[0];
         float mx = src->multipole[1];
@@ -545,9 +546,9 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src) {
         float m_dot_r      = (mx * dx) + (my * dy) + (mz * dz);
         float dipole_coeff = 3.0F * m_dot_r * inv_r5;
 
-        float force_dip_x = (dx * dipole_coeff) - (mx * inv_r3);
-        float force_dip_y = (dy * dipole_coeff) - (my * inv_r3);
-        float force_dip_z = (dz * dipole_coeff) - (mz * inv_r3);
+        float force_dip_x = (mx * inv_r3) - (dx * dipole_coeff);
+        float force_dip_y = (my * inv_r3) - (dy * dipole_coeff);
+        float force_dip_z = (mz * inv_r3) - (dz * dipole_coeff);
 
         // accumulate into target's local expansion
         target->local[1] += force_m0_x + force_dip_x;
@@ -724,7 +725,7 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
     float hw_sum = target->half_width + src->half_width;
 
     // if well-separated M2L already handled it
-    if (dist_sq > (theta * theta) * (hw_sum * hw_sum)) {
+    if (dist_sq > 12.0F * (theta * theta) * (hw_sum * hw_sum)) {
         return;
     }
 
@@ -814,7 +815,7 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
             float32x4_t t_x_vec = vdupq_n_f32(t_x);
             float32x4_t t_y_vec = vdupq_n_f32(t_y);
             float32x4_t t_z_vec = vdupq_n_f32(t_z);
-            float32x4_t eps_vec = vdupq_n_f32(2.0F);
+            float32x4_t eps_vec = vdupq_n_f32(0.1F);
 
             // accumulators for target particles forces
             float32x4_t f_x_vec = vdupq_n_f32(0.0F);

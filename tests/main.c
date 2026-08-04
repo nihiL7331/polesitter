@@ -156,13 +156,14 @@ void test_radix_sort(void) {
     ps_init(&ctx, &cfg);
 
     uint32_t morton_codes[4] = {999, 10, 500, 42};
+    uint32_t ids[4]          = {0, 1, 2, 3};
     float    x[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
     float    y[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
     float    z[4]            = {9.0F, 1.0F, 5.0F, 4.0F};
     float    mass[4]         = {9.0F, 1.0F, 5.0F, 4.0F};
-    float    fx[2] = {0.0F, 0.0F}, fy[2] = {0.0F, 0.0F}, fz[2] = {0.0F, 0.0F};
+    float    fx[4] = {0.0F}, fy[4] = {0.0F}, fz[4] = {0.0F};
 
-    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 0, 4};
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, ids, 4};
 
     ps_impl_sort_particles(&ctx->arena, morton_codes, &arrs);
 
@@ -243,22 +244,21 @@ void test_fmm_interaction_pass(void) {
     node_a->x          = -5.0F;
     node_a->y          = -5.0F;
     node_a->z          = -5.0F;
-    node_a->half_width = 2.5F;
+    node_a->half_width = 1.0F;
 
     node_b->x          = 5.0F;
     node_b->y          = 5.0F;
     node_b->z          = 5.0F;
-    node_b->half_width = 2.5F;
+    node_b->half_width = 1.0F;
 
     node_b->multipole[0] = 1.0F;
 
     ps_impl_fmm_interaction_pass(node_a, node_b);
 
     // vector from A to B: dx=10, dy=10, dz=10
-    // dist_sq = 300, dist = sqrt(300) ~= 17.32
-    // inv_r3 = 1.0 / (dist * dist_sq) ~= 0.00019245
-    // F_field = m * dx * inv_r3 ~= 1.0 * 10 * 0.00019245 ~= 0.0019245
-    float expected_field = 0.0019245F;
+    // softened dist_sq = 300.1, dist ~= 17.3234
+    // F_field = m * dx / (dist_sq^1.5) ~= 0.00192354
+    float expected_field = 0.00192354F;
 
     // verify node a local expansion
     TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[1], 1e-6F); // F_x
@@ -374,7 +374,7 @@ void test_fmm_p2p_pass(void) {
     ps_impl_fmm_p2p_pass(ctx->root, ctx->root, &arrs);
 
     // dist = 1.0
-    // dist_sq = 1.0^2 + 2.0 = 3.0
+    // dist_sq = 1.0^2 + 0.1 = 1.1
     // F_mag = (mass1 * mass2) / (dist_sq^1.5)
     float expected_f = (2.0F * 3.0F) * powf(1.1F, -1.5F);
 
@@ -395,6 +395,7 @@ int main(void) {
     RUN_TEST(test_morton_encoding);
     RUN_TEST(test_arena_allocator);
     RUN_TEST(test_octree_insertion);
+    RUN_TEST(test_radix_sort);
     RUN_TEST(test_fmm_upward_pass);
     RUN_TEST(test_fmm_interaction_pass);
     RUN_TEST(test_fmm_downward_pass);
