@@ -316,9 +316,9 @@ struct ps_context {
 
 #ifdef PS_MULTITHREADING
 
-#ifndef PS_MAX_THREADS
-#define PS_MAX_THREADS 32
-#endif // PS_MAX_THREADS
+#ifndef PS_MAX_THRDS
+#define PS_MAX_THRDS 32
+#endif // PS_MAX_THRDS
 
 #ifndef PS_MAX_JOBS
 #define PS_MAX_JOBS 512
@@ -350,7 +350,7 @@ typedef struct {
 } ps_job_t;
 
 typedef struct {
-    ps_thrd_t thrds[PS_MAX_THREADS];
+    ps_thrd_t thrds[PS_MAX_THRDS];
     uint32_t  thrd_cnt;
 
     ps_job_t queue[PS_MAX_JOBS];
