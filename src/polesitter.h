@@ -164,7 +164,6 @@
 #define POLESITTER_H
 
 #include <float.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
