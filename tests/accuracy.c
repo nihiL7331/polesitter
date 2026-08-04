@@ -1,4 +1,3 @@
-// clang-format off
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -7,7 +6,7 @@
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
-#define ARENA_SIZE (1024ULL * 1024ULL * 32ULL)
+#define ARENA_SIZE   (1024ULL * 1024ULL * 32ULL)
 #define SOFTENING_SQ 0.1F
 
 static int g_failures = 0;
@@ -15,8 +14,8 @@ static int g_failures = 0;
 static void failf(const char* name, double actual, double expected,
                   double tolerance) {
     (void)fprintf(stderr,
-                  "[FAIL] %s: actual=%.9g expected=%.9g tolerance=%.9g\n",
-                  name, actual, expected, tolerance);
+                  "[FAIL] %s: actual=%.9g expected=%.9g tolerance=%.9g\n", name,
+                  actual, expected, tolerance);
     ++g_failures;
 }
 
@@ -51,13 +50,13 @@ static void direct_reference(const float* x, const float* y, const float* z,
                 continue;
             }
 
-            double dx = (double)x[j] - (double)x[i];
-            double dy = (double)y[j] - (double)y[i];
-            double dz = (double)z[j] - (double)z[i];
-            double r2 = (dx * dx) + (dy * dy) + (dz * dz) + SOFTENING_SQ;
-            double inv_r = 1.0 / sqrt(r2);
+            double dx     = (double)x[j] - (double)x[i];
+            double dy     = (double)y[j] - (double)y[i];
+            double dz     = (double)z[j] - (double)z[i];
+            double r2     = (dx * dx) + (dy * dy) + (dz * dz) + SOFTENING_SQ;
+            double inv_r  = 1.0 / sqrt(r2);
             double inv_r3 = inv_r * inv_r * inv_r;
-            double scale = (double)mass[i] * (double)mass[j] * inv_r3;
+            double scale  = (double)mass[i] * (double)mass[j] * inv_r3;
 
             ax += dx * scale;
             ay += dy * scale;
@@ -76,14 +75,14 @@ static void run_dipole_sign_test(void) {
     ps_impl_node_init(&target);
     ps_impl_node_init(&source);
 
-    target.x = 0.0F;
-    target.y = 0.0F;
-    target.z = 0.0F;
+    target.x          = 0.0F;
+    target.y          = 0.0F;
+    target.z          = 0.0F;
     target.half_width = 1.0F;
 
-    source.x = 100.0F;
-    source.y = 0.0F;
-    source.z = 0.0F;
+    source.x          = 100.0F;
+    source.y          = 0.0F;
+    source.z          = 0.0F;
     source.half_width = 1.0F;
 
     /* One unit mass displaced +1 from the source-cell center. */
@@ -104,46 +103,46 @@ static void fill_uniform(float* x, float* y, float* z, float* mass,
                          uint32_t* id, size_t count) {
     uint32_t state = 7331U;
     for (size_t i = 0; i < count; ++i) {
-        x[i] = (rand_unit(&state) * 100.0F) - 50.0F;
-        y[i] = (rand_unit(&state) * 100.0F) - 50.0F;
-        z[i] = (rand_unit(&state) * 100.0F) - 50.0F;
+        x[i]    = (rand_unit(&state) * 100.0F) - 50.0F;
+        y[i]    = (rand_unit(&state) * 100.0F) - 50.0F;
+        z[i]    = (rand_unit(&state) * 100.0F) - 50.0F;
         mass[i] = 0.5F + (rand_unit(&state) * 1.5F);
-        id[i] = (uint32_t)i;
+        id[i]   = (uint32_t)i;
     }
 }
 
 static void fill_two_clusters(float* x, float* y, float* z, float* mass,
                               uint32_t* id, size_t count) {
     uint32_t state = 20260803U;
-    size_t half = count / 2;
+    size_t   half  = count / 2;
 
     for (size_t i = 0; i < count; ++i) {
         float center = i < half ? -12.0F : 12.0F;
-        float skew = i < half ? -0.75F : 0.75F;
-        x[i] = center + skew + ((rand_unit(&state) - 0.5F) * 2.0F);
-        y[i] = (rand_unit(&state) - 0.5F) * 2.0F;
-        z[i] = (rand_unit(&state) - 0.5F) * 2.0F;
-        mass[i] = 0.5F + (rand_unit(&state) * 2.0F);
-        id[i] = (uint32_t)i;
+        float skew   = i < half ? -0.75F : 0.75F;
+        x[i]         = center + skew + ((rand_unit(&state) - 0.5F) * 2.0F);
+        y[i]         = (rand_unit(&state) - 0.5F) * 2.0F;
+        z[i]         = (rand_unit(&state) - 0.5F) * 2.0F;
+        mass[i]      = 0.5F + (rand_unit(&state) * 2.0F);
+        id[i]        = (uint32_t)i;
     }
 }
 
 static double run_accuracy_case(const char* name, size_t count,
                                 void (*fill)(float*, float*, float*, float*,
                                              uint32_t*, size_t)) {
-    float* x = (float*)malloc(count * sizeof(float));
-    float* y = (float*)malloc(count * sizeof(float));
-    float* z = (float*)malloc(count * sizeof(float));
-    float* mass = (float*)malloc(count * sizeof(float));
-    float* fx = (float*)calloc(count, sizeof(float));
-    float* fy = (float*)calloc(count, sizeof(float));
-    float* fz = (float*)calloc(count, sizeof(float));
-    uint32_t* id = (uint32_t*)malloc(count * sizeof(uint32_t));
+    float*    x      = (float*)malloc(count * sizeof(float));
+    float*    y      = (float*)malloc(count * sizeof(float));
+    float*    z      = (float*)malloc(count * sizeof(float));
+    float*    mass   = (float*)malloc(count * sizeof(float));
+    float*    fx     = (float*)calloc(count, sizeof(float));
+    float*    fy     = (float*)calloc(count, sizeof(float));
+    float*    fz     = (float*)calloc(count, sizeof(float));
+    uint32_t* id     = (uint32_t*)malloc(count * sizeof(uint32_t));
     uint32_t* morton = (uint32_t*)malloc(count * sizeof(uint32_t));
-    double* ref_fx = (double*)malloc(count * sizeof(double));
-    double* ref_fy = (double*)malloc(count * sizeof(double));
-    double* ref_fz = (double*)malloc(count * sizeof(double));
-    void* arena = malloc(ARENA_SIZE);
+    double*   ref_fx = (double*)malloc(count * sizeof(double));
+    double*   ref_fy = (double*)malloc(count * sizeof(double));
+    double*   ref_fz = (double*)malloc(count * sizeof(double));
+    void*     arena  = malloc(ARENA_SIZE);
 
     if (!x || !y || !z || !mass || !fx || !fy || !fz || !id || !morton ||
         !ref_fx || !ref_fy || !ref_fz || !arena) {
@@ -169,8 +168,8 @@ static double run_accuracy_case(const char* name, size_t count,
     direct_reference(x, y, z, mass, count, ref_fx, ref_fy, ref_fz);
 
     ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, id, count};
-    ps_context_t* ctx = NULL;
-    ps_config_t cfg = {arena, ARENA_SIZE};
+    ps_context_t*      ctx  = NULL;
+    ps_config_t        cfg  = {arena, ARENA_SIZE};
 
     if (ps_init(&ctx, &cfg) != PS_OK) {
         (void)fprintf(stderr, "[FAIL] %s: ps_init failed\n", name);
@@ -195,8 +194,7 @@ static double run_accuracy_case(const char* name, size_t count,
     float max_b = 0.0F;
     float range = 0.0F;
     if (ps_prepare_particles(&arrs, morton, &min_b, &max_b, &range) != PS_OK) {
-        (void)fprintf(stderr, "[FAIL] %s: ps_prepare_particles failed\n",
-                      name);
+        (void)fprintf(stderr, "[FAIL] %s: ps_prepare_particles failed\n", name);
         ++g_failures;
     } else {
         float root_c = min_b + (range * 0.5F);
@@ -207,17 +205,17 @@ static double run_accuracy_case(const char* name, size_t count,
         }
     }
 
-    double err2 = 0.0;
-    double ref2 = 0.0;
+    double err2    = 0.0;
+    double ref2    = 0.0;
     double max_rel = 0.0;
 
     for (size_t i = 0; i < count; ++i) {
         uint32_t original = id[i];
-        double dx = (double)fx[i] - ref_fx[original];
-        double dy = (double)fy[i] - ref_fy[original];
-        double dz = (double)fz[i] - ref_fz[original];
-        double e2 = (dx * dx) + (dy * dy) + (dz * dz);
-        double r2 = (ref_fx[original] * ref_fx[original]) +
+        double   dx       = (double)fx[i] - ref_fx[original];
+        double   dy       = (double)fy[i] - ref_fy[original];
+        double   dz       = (double)fz[i] - ref_fz[original];
+        double   e2       = (dx * dx) + (dy * dy) + (dz * dz);
+        double   r2       = (ref_fx[original] * ref_fx[original]) +
                     (ref_fy[original] * ref_fy[original]) +
                     (ref_fz[original] * ref_fz[original]);
         err2 += e2;
@@ -231,8 +229,9 @@ static double run_accuracy_case(const char* name, size_t count,
     }
 
     double rms_rel = ref2 > 0.0 ? sqrt(err2 / ref2) : 0.0;
-    (void)printf("[METRIC] %s: rms_relative_error=%.6f max_relative_error=%.6f\n",
-                 name, rms_rel, max_rel);
+    (void)printf(
+        "[METRIC] %s: rms_relative_error=%.6f max_relative_error=%.6f\n", name,
+        rms_rel, max_rel);
 
     free(x);
     free(y);
@@ -276,4 +275,3 @@ int main(void) {
     (void)printf("\nAll accuracy validations passed.\n");
     return EXIT_SUCCESS;
 }
-// clang-format on
