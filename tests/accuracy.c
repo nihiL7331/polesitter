@@ -170,7 +170,7 @@ static double run_accuracy_case(const char* name, size_t count,
 
     ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, id, count};
     ps_context_t*      ctx  = NULL;
-    ps_config_t        cfg  = {arena, ARENA_SIZE, THETA};
+    ps_config_t        cfg  = {arena, ARENA_SIZE, THETA, 1};
 
     if (ps_init(&ctx, &cfg) != PS_OK) {
         (void)fprintf(stderr, "[FAIL] %s: ps_init failed\n", name);

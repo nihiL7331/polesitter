@@ -164,6 +164,7 @@
 #define POLESITTER_H
 
 #include <float.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -229,10 +230,11 @@ typedef void* (*ps_thrd_func_t)(void*);
 // =====================================================================
 
 typedef enum {
-    PS_OK        = 0,
-    PS_EOOM      = -1, // out of memory
-    PS_EINVAL    = -2, // invalid argument
-    PS_THRD_FAIL = -3, // thread creation failed
+    PS_OK     = 0,
+    PS_EOOM   = -1, // out of memory
+    PS_EINVAL = -2, // invalid argument
+    PS_ETHRD  = -3, // thread creation failed
+    PS_EALLOC = -4, // allocation failed
 } ps_result_t;
 
 typedef struct ps_context ps_context_t;
@@ -241,6 +243,7 @@ typedef struct {
     void*  buff;      // ram provided by host
     size_t buff_size; // total size in B
     float  theta;     // MAC threshold. 0.0F defaults to 1.0F
+    size_t thrd_cnt;  // 0 defaults to 1 (single-threaded impl)
 } ps_config_t;
 
 typedef struct {
@@ -271,6 +274,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 #endif // POLESITTER_H
 
+#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -281,6 +285,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 // internal structs
 // ---------------------------------------------------------------------
 
+// represents one threads memory slice
 typedef struct {
     uint8_t* mem;
     size_t   cap;
@@ -309,14 +314,6 @@ typedef struct ps_node {
     uint32_t _pad;
 } ps_node_t;
 
-struct ps_context {
-    ps_arena_t arena;
-    ps_node_t* root;
-    float      theta;
-};
-
-#ifdef PS_MULTITHREADING
-
 #ifndef PS_MAX_THRDS
 #define PS_MAX_THRDS 32
 #endif // PS_MAX_THRDS
@@ -327,7 +324,10 @@ struct ps_context {
 
 typedef enum {
     PS_JOB_EXIT = 0,
-    // TODO: add passes/radix related job types here
+    PS_JOB_UPWARD,
+    PS_JOB_INTERACTION,
+    PS_JOB_DOWNWARD,
+    PS_JOB_P2P,
 } ps_job_type_t;
 
 typedef struct {
@@ -350,6 +350,8 @@ typedef struct {
     } data;
 } ps_job_t;
 
+#ifdef PS_MULTITHREADING
+
 typedef struct {
     ps_thrd_t thrds[PS_MAX_THRDS];
     uint32_t  thrd_cnt;
@@ -367,7 +369,27 @@ typedef struct {
     ps_cond_t done_cond;  // main thread waits for active_jobs == 0
 } ps_thrd_pool_t;
 
+// payload passed to each worker thread when it spawns
+typedef struct {
+    ps_thrd_pool_t* pool;
+    ps_context_t*   ctx;
+    uint32_t        thrd_id; // 0 is main thrd
+} ps_worker_arg_t;
+
 #endif // PS_MULTITHREADING
+
+struct ps_context {
+    ps_node_t* root;
+    float      theta;
+    ps_arena_t arenas[PS_MAX_THRDS + 1];
+
+#ifdef PS_MULTITHREADING
+
+    ps_thrd_pool_t  pool;
+    ps_worker_arg_t worker_args[PS_MAX_THRDS];
+
+#endif // PS_MULTITHREADING
+};
 
 // ---------------------------------------------------------------------
 // internal functions
@@ -456,33 +478,74 @@ static inline void ps_thrd_join(ps_thrd_t t) {
 
 #endif
 
-static void ps_impl_pool_submit(ps_thrd_pool_t* pool, ps_job_t job) {
-    ps_mtx_lock(&pool->lock);
+#endif // PS_MULTITHREADING
 
-    // block if buffer is full
-    while (pool->cnt == PS_MAX_JOBS && !pool->shutdown_flag) {
-        ps_cond_wait(&pool->space_cond, &pool->lock);
+// forward declare passes for router
+static void ps_impl_fmm_upward_pass(ps_node_t*                node,
+                                    const ps_particle_arrs_t* arrs);
+static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src,
+                                         float theta);
+static void ps_impl_fmm_downward_pass(ps_node_t*                node,
+                                      const ps_particle_arrs_t* arrs);
+static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
+                                 const ps_particle_arrs_t* arrs);
+
+static inline void ps_impl_exec_job(ps_context_t* ctx, ps_job_t* job) {
+    if (job->type == PS_JOB_UPWARD) {
+        ps_impl_fmm_upward_pass(job->data.fmm.src, job->data.fmm.arrs);
+    } else if (job->type == PS_JOB_INTERACTION) {
+        ps_impl_fmm_interaction_pass(job->data.fmm.target, job->data.fmm.src,
+                                     ctx->theta);
+    } else if (job->type == PS_JOB_DOWNWARD) {
+        ps_impl_fmm_downward_pass(job->data.fmm.src, job->data.fmm.arrs);
+    } else if (job->type == PS_JOB_P2P) {
+        ps_impl_fmm_p2p_pass(job->data.fmm.target, job->data.fmm.src,
+                             job->data.fmm.arrs);
     }
-
-    // enqueue
-    pool->queue[pool->tl] = job;
-    pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
-    pool->cnt++;
-
-    ps_cond_signal(&pool->work_cond);
-    ps_mtx_unlock(&pool->lock);
 }
 
-static void ps_impl_pool_wait(ps_thrd_pool_t* pool) {
-    ps_mtx_lock(&pool->lock);
-
-    // main thrd blocks til queue is empty & no workers are active
-    while (pool->cnt > 0 || pool->active_jobs > 0) {
-        ps_cond_wait(&pool->done_cond, &pool->lock);
-    }
-
-    ps_mtx_unlock(&pool->lock);
-}
+// static void ps_impl_pool_submit(ps_context_t* ctx, ps_job_t job) {
+// #ifdef PS_MULTITHREADING
+//
+//     ps_thrd_pool_t* pool = &ctx->pool;
+//     ps_mtx_lock(&pool->lock);
+//
+//     // block if buffer is full
+//     while (pool->cnt == PS_MAX_JOBS && !pool->shutdown_flag) {
+//         ps_cond_wait(&pool->space_cond, &pool->lock);
+//     }
+//
+//     // enqueue
+//     pool->queue[pool->tl] = job;
+//     pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
+//     pool->cnt++;
+//
+//     ps_cond_signal(&pool->work_cond);
+//     ps_mtx_unlock(&pool->lock);
+//
+// #else // single-threaded
+//
+//     job.thrd_id = 0;
+//     ps_impl_exec_job(ctx, &job);
+//
+// #endif
+// }
+//
+// // no-op if single-threaded
+// static void ps_impl_pool_wait(ps_thrd_pool_t* pool) {
+// #ifdef PS_MULTITHREADING
+//
+//     ps_mtx_lock(&pool->lock);
+//
+//     // main thrd blocks til queue is empty & no workers are active
+//     while (pool->cnt > 0 || pool->active_jobs > 0) {
+//         ps_cond_wait(&pool->done_cond, &pool->lock);
+//     }
+//
+//     ps_mtx_unlock(&pool->lock);
+//
+// #endif // PS_MULTITHREADING
+// }
 
 static PS_THRD_RET_TYPE ps_impl_worker_loop(void* arg) {
     ps_thrd_pool_t* pool = (ps_thrd_pool_t*)arg;
@@ -526,7 +589,10 @@ static PS_THRD_RET_TYPE ps_impl_worker_loop(void* arg) {
     return PS_THRD_RET_VAL;
 }
 
-static int ps_impl_pool_init(ps_thrd_pool_t* pool, uint32_t num_thrds) {
+static int ps_impl_pool_init(ps_context_t* ctx, uint32_t num_thrds) {
+    ps_thrd_pool_t*  pool        = &ctx->pool;
+    ps_worker_arg_t* worker_args = ctx->worker_args;
+
     pool->hd            = 0;
     pool->tl            = 0;
     pool->cnt           = 0;
@@ -546,31 +612,33 @@ static int ps_impl_pool_init(ps_thrd_pool_t* pool, uint32_t num_thrds) {
     ps_cond_init(&pool->done_cond);
 
     for (uint32_t i = 0; i < pool->thrd_cnt; ++i) {
+        worker_args[i].pool    = pool;
+        worker_args[i].ctx     = ctx;
+        worker_args[i].thrd_id = i + 1;
+
         if (ps_thrd_create(&pool->thrds[i], ps_impl_worker_loop, pool) != 0) {
-            return PS_THRD_FAIL;
+            return PS_ETHRD;
         }
     }
 
     return PS_OK;
 }
 
-static void ps_impl_pool_destroy(ps_thrd_pool_t* pool) {
-    ps_mtx_lock(&pool->lock);
-    pool->shutdown_flag = 1;
-    ps_cond_bcast(&pool->work_cond);
-    ps_mtx_unlock(&pool->lock);
-
-    for (uint32_t i = 0; i < pool->thrd_cnt; ++i) {
-        ps_thrd_join(pool->thrds[i]);
-    }
-
-    ps_mtx_destroy(&pool->lock);
-    ps_cond_destroy(&pool->work_cond);
-    ps_cond_destroy(&pool->space_cond);
-    ps_cond_destroy(&pool->done_cond);
-}
-
-#endif // PS_MULTITHREADING
+// static void ps_impl_pool_destroy(ps_thrd_pool_t* pool) {
+//     ps_mtx_lock(&pool->lock);
+//     pool->shutdown_flag = 1;
+//     ps_cond_bcast(&pool->work_cond);
+//     ps_mtx_unlock(&pool->lock);
+//
+//     for (uint32_t i = 0; i < pool->thrd_cnt; ++i) {
+//         ps_thrd_join(pool->thrds[i]);
+//     }
+//
+//     ps_mtx_destroy(&pool->lock);
+//     ps_cond_destroy(&pool->work_cond);
+//     ps_cond_destroy(&pool->space_cond);
+//     ps_cond_destroy(&pool->done_cond);
+// }
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
 static uint32_t ps_impl_expand_bits(uint32_t v) {
@@ -597,47 +665,37 @@ static uint32_t ps_impl_morton_encode(uint32_t x, uint32_t y, uint32_t z) {
 }
 
 // rounds 'v' up to the nearest multiple of 'align', which must be a power of 2
-static inline size_t ps_align_forward(size_t v, size_t align) {
+static inline size_t ps_impl_align_forward(size_t v, size_t align) {
     return (v + (align - 1)) & ~(align - 1);
 }
 
 // init arena with pre-allocated/externally provided buffer
-static void ps_arena_init(ps_arena_t* arena, void* buffer, size_t cap) {
+static void ps_impl_arena_init(ps_arena_t* arena, void* buffer, size_t cap) {
     arena->mem = (uint8_t*)buffer;
     arena->cap = cap;
     arena->off = 0;
 }
 
-// alloc raw bytes with a specified align (16 for SIMD)
-static void* ps_arena_alloc(ps_arena_t* arena, size_t size, size_t align) {
-    // current aligned address offset
-    size_t curr_addr  = (size_t)(arena->mem + arena->off);
-    size_t align_addr = ps_align_forward(curr_addr, align);
+// alloc raw bytes
+static void* ps_impl_arena_alloc(ps_context_t* ctx, uint32_t thrd_id,
+                                 size_t size) {
+    ps_arena_t* local = &ctx->arenas[thrd_id];
 
-    // how much extra padding was added to align the address
-    size_t pad = align_addr - curr_addr;
+    // 16B align for SIMD
+    size = (size + 15) & ~15;
 
     // check if we have enough space in the arena
-    size_t total_req = size + pad;
-    if (arena->off + total_req > arena->cap) {
+    if (local->off + size > local->cap) {
         return NULL;
     }
 
     // advance bump pointer and return aligned address
-    void* ptr = (void*)align_addr;
-    arena->off += total_req;
+    void* ptr = local->mem + local->off;
+    local->off += size;
 
     return ptr;
 }
-
-// clear for next frame
-static void ps_arena_clear(ps_arena_t* arena) {
-    arena->off = 0;
-}
-
-#define PS_MAX_DEPTH                                                           \
-    10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
-
+//
 // zero out a newly allocated node
 static void ps_impl_node_init(ps_node_t* node) {
     node->x          = 0.0F;
@@ -659,9 +717,29 @@ static void ps_impl_node_init(ps_node_t* node) {
     node->first_particle_idx = 0;
 }
 
+// helper to grab a new node
+static inline ps_node_t* ps_impl_alloc_node(ps_context_t* ctx,
+                                            uint32_t      thrd_id) {
+    ps_node_t* node =
+        (ps_node_t*)ps_impl_arena_alloc(ctx, thrd_id, sizeof(ps_node_t));
+    if (node) {
+        ps_impl_node_init(node);
+    }
+
+    return node;
+}
+
+// clear for next frame
+static void ps_impl_arena_clear(ps_arena_t* arena) {
+    arena->off = 0;
+}
+
+#define PS_MAX_DEPTH                                                           \
+    10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
+
 // walk the morton code and build the tree branches
-static ps_result_t ps_impl_tree_insert(ps_arena_t* arena, ps_node_t* root,
-                                       uint32_t morton_code,
+static ps_result_t ps_impl_tree_insert(ps_context_t* ctx, uint32_t thrd_id,
+                                       ps_node_t* root, uint32_t morton_code,
                                        uint32_t particle_idx) {
     if (!root) {
         return PS_EINVAL;
@@ -686,13 +764,10 @@ static ps_result_t ps_impl_tree_insert(ps_arena_t* arena, ps_node_t* root,
         curr_z += (octant & 0x4 /* bit 2 */) ? curr_hw : -curr_hw;
 
         if (!curr->children[octant]) {
-            ps_node_t* new_node =
-                (ps_node_t*)ps_arena_alloc(arena, sizeof(ps_node_t), 32);
+            ps_node_t* new_node = ps_impl_alloc_node(ctx, thrd_id);
             if (!new_node) {
                 return PS_EOOM;
             }
-
-            ps_impl_node_init(new_node);
 
             new_node->x          = curr_x;
             new_node->y          = curr_y;
@@ -876,32 +951,12 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src,
     }
 }
 
-// pass 3
+// pass 3/4
 // l2l, pushes the accumulated background field from parents down to their
 // children
-static void ps_impl_fmm_downward_pass(ps_node_t* node) {
-    if (!node || node->is_leaf) {
-        return;
-    }
-
-    for (int i = 0; i < 8; ++i) {
-        ps_node_t* child = node->children[i];
-        if (child) {
-            // 1-st order local expansion,
-            // shifting it is adding the parent's field to the child's field
-            child->local[1] += node->local[1];
-            child->local[2] += node->local[2];
-            child->local[3] += node->local[3];
-
-            ps_impl_fmm_downward_pass(child);
-        }
-    }
-}
-
-// pass 4
 // l2p, applies the accumulated bg field to the particles inside the leaf
-static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
-                                 const ps_particle_arrs_t* arrs) {
+static void ps_impl_fmm_downward_pass(ps_node_t*                node,
+                                      const ps_particle_arrs_t* arrs) {
     if (!node) {
         return;
     }
@@ -985,9 +1040,17 @@ static void ps_impl_fmm_l2p_pass(ps_node_t*                node,
         return;
     }
 
-    // cascade
     for (int i = 0; i < 8; ++i) {
-        ps_impl_fmm_l2p_pass(node->children[i], arrs);
+        ps_node_t* child = node->children[i];
+        if (child) {
+            // 1-st order local expansion,
+            // shifting it is adding the parent's field to the child's field
+            child->local[1] += node->local[1];
+            child->local[2] += node->local[2];
+            child->local[3] += node->local[3];
+
+            ps_impl_fmm_downward_pass(child, arrs);
+        }
     }
 }
 
@@ -1223,26 +1286,32 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
         (b)      = tmp;                                                        \
     } while (0)
 
-static ps_result_t ps_impl_sort_particles(ps_arena_t* arena,
-                                          uint32_t*   morton_codes,
+static ps_result_t ps_impl_sort_particles(ps_context_t* ctx, uint32_t thrd_id,
+                                          uint32_t* morton_codes,
                                           const ps_particle_arrs_t* arrs) {
     size_t cnt = arrs->cnt;
     if (cnt == 0) {
         return PS_OK;
     }
 
+    ps_arena_t* arena = &ctx->arenas[thrd_id];
+
     // used later to reclaim temp memory
     size_t tmp_off = arena->off;
 
     // borrow temp SoA buffers from the arena
     uint32_t* m_tmp =
-        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 32);
+        (uint32_t*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(uint32_t));
     uint32_t* id_tmp =
-        (uint32_t*)ps_arena_alloc(arena, cnt * sizeof(uint32_t), 32);
-    float* x_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
-    float* y_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
-    float* z_tmp    = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
-    float* mass_tmp = (float*)ps_arena_alloc(arena, cnt * sizeof(float), 32);
+        (uint32_t*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(uint32_t));
+    float* x_tmp =
+        (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
+    float* y_tmp =
+        (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
+    float* z_tmp =
+        (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
+    float* mass_tmp =
+        (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
 
     if (!m_tmp || !x_tmp || !y_tmp || !z_tmp || !mass_tmp) {
         return PS_EOOM;
@@ -1325,10 +1394,32 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
     ctx->root         = NULL;
     ctx->theta        = (conf->theta > 0.0F) ? conf->theta : 1.0F;
 
+    uint32_t num_workers = conf->thrd_cnt - 1;
+    if (num_workers > PS_MAX_THRDS) {
+        num_workers = PS_MAX_THRDS;
+    }
+
     // arena takes the rest
-    size_t arena_start = ps_align_forward(sizeof(ps_context_t), 16);
-    ps_arena_init(&ctx->arena, (uint8_t*)conf->buff + arena_start,
-                  conf->buff_size - arena_start);
+    size_t arena_start = ps_impl_align_forward(sizeof(ps_context_t), 16);
+
+    size_t   usable_space = conf->buff_size - arena_start;
+    uint32_t total_slices = num_workers + 1; // workers + main thrd
+    size_t   slice_size   = usable_space / total_slices;
+
+    uint8_t* master_mem = (uint8_t*)conf->buff + arena_start;
+    for (uint32_t i = 0; i < total_slices; ++i) {
+        ps_impl_arena_init(&ctx->arenas[i], master_mem + (i * slice_size),
+                           slice_size);
+    }
+
+#ifdef PS_MULTITHREADING
+
+    // initialize the pool
+    if (ps_impl_pool_init(ctx, num_workers) != 0) {
+        return PS_EALLOC;
+    }
+
+#endif // PS_MULTITHREADING
 
     *out_ctx = ctx;
     return PS_OK;
@@ -1342,13 +1433,13 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     }
 
     // clear arena for new frame
-    ps_arena_clear(&ctx->arena);
+    ps_impl_arena_clear(&ctx->arenas[0]);
 
     // sort the arrays based on morton_codes as keys
-    ps_impl_sort_particles(&ctx->arena, morton_codes, arrs);
+    ps_impl_sort_particles(ctx, 0, morton_codes, arrs);
 
     // allocate the root node
-    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 32);
+    ctx->root = (ps_node_t*)ps_impl_arena_alloc(ctx, 0, sizeof(ps_node_t));
     if (!ctx->root) {
         return PS_EOOM;
     }
@@ -1363,8 +1454,7 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
 
     // build the octree
     for (size_t i = 0; i < arrs->cnt; ++i) {
-        ps_impl_tree_insert(&ctx->arena, ctx->root, morton_codes[i],
-                            (uint32_t)i);
+        ps_impl_tree_insert(ctx, 0, ctx->root, morton_codes[i], (uint32_t)i);
 
         arrs->fx[i] = 0.0F;
         arrs->fy[i] = 0.0F;
@@ -1377,11 +1467,10 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     // interaction pass (m2l)
     ps_impl_fmm_interaction_pass(ctx->root, ctx->root, ctx->theta);
 
-    // downward pass (l2l)
-    ps_impl_fmm_downward_pass(ctx->root);
+    // downward pass (l2l -> l2p)
+    ps_impl_fmm_downward_pass(ctx->root, arrs);
 
-    // evaluation pass (l2p->p2p)
-    ps_impl_fmm_l2p_pass(ctx->root, arrs);
+    // evaluation pass (p2p)
     ps_impl_fmm_p2p_pass(ctx->root, ctx->root, arrs);
 
     return PS_OK;

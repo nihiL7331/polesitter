@@ -114,7 +114,7 @@ int main(void) {
 
         void*         buffer = malloc(ARENA_SIZE);
         ps_context_t* ctx    = NULL;
-        ps_config_t   cfg    = {buffer, ARENA_SIZE, 1.0F};
+        ps_config_t   cfg    = {buffer, ARENA_SIZE, 1.0F, 1};
         ps_init(&ctx, &cfg);
 
         clock_t start_fmm = clock();
