@@ -193,7 +193,6 @@
 
 #endif // PS_RESTRICT
 
-#define PS_MULTITHREADING
 #ifdef PS_MULTITHREADING
 
 #ifdef _WIN32
@@ -274,7 +273,6 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 #endif // POLESITTER_H
 
-#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
