@@ -380,12 +380,20 @@ typedef struct {
             const ps_particle_arrs_t* arrs;
         } fmm;
 
-        // for radix/tree
+        // for radix
         struct {
             uint32_t start_idx;
             uint32_t end_idx;
             uint32_t chunk_id;
         } array;
+
+        // for tree
+        struct {
+            ps_node_t* node;
+            uint32_t   start_idx;
+            uint32_t   end_idx;
+            uint32_t   depth;
+        } tree;
     } data;
 } ps_job_t;
 
