@@ -1,6 +1,6 @@
 // clang-format off
 /*-
-    polesitter - v1.0 - Fast Multipole Method (FFM) N-body solver written in C99
+    polesitter - v2.0 - Fast Multipole Method (FFM) N-body solver written in C99
 
     Do this:
         #define POLESITTER_IMPLEMENTATION
