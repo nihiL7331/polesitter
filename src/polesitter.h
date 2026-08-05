@@ -1583,6 +1583,76 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
     return PS_OK;
 }
 
+#ifdef PS_MULTITHREADING
+
+// dispatches target nodes for M2L/P2P passes
+static void ps_impl_dispatch_fmm(ps_context_t* ctx, ps_job_type_t job_type,
+                                 ps_node_t* target, ps_node_t* src,
+                                 const ps_particle_arrs_t* arrs, int curr_depth,
+                                 int target_depth) {
+    if (!target) {
+        return;
+    }
+
+    if (curr_depth == target_depth || (target->data.leaf.is_leaf & 1)) {
+        ps_job_t job;
+        job.type            = job_type;
+        job.data.fmm.target = target;
+        job.data.fmm.src    = src;
+        job.data.fmm.arrs   = arrs;
+        ps_impl_pool_submit(ctx, job);
+        return;
+    }
+
+    // otherwise keep traversing down
+    for (int i = 0; i < 8; ++i) {
+        ps_node_t* target_child =
+            ps_impl_get_node(ctx, target->data.children_offs[i]);
+        if (!target_child) {
+            continue;
+        }
+
+        ps_impl_dispatch_fmm(ctx, job_type, target_child, src, arrs,
+                             curr_depth + 1, target_depth);
+    }
+}
+
+// dispatches nodes for downward pass
+static void ps_impl_dispatch_downward(ps_context_t* ctx, ps_node_t* target,
+                                      const ps_particle_arrs_t* arrs,
+                                      int curr_depth, int target_depth) {
+    if (!target) {
+        return;
+    }
+
+    if (curr_depth == target_depth || (target->data.leaf.is_leaf & 1)) {
+        ps_job_t job;
+        job.type          = PS_JOB_DOWNWARD;
+        job.data.fmm.src  = target;
+        job.data.fmm.arrs = arrs;
+        ps_impl_pool_submit(ctx, job);
+        return;
+    }
+    // above target depth, manually push local field down before dispatch
+    for (int i = 0; i < 8; ++i) {
+        ps_node_t* child = ps_impl_get_node(ctx, target->data.children_offs[i]);
+        if (!child) {
+            continue;
+        }
+
+        float* child_local  = ps_impl_get_local(ctx, child);
+        float* target_local = ps_impl_get_local(ctx, target);
+
+        child_local[1] += target_local[1];
+        child_local[2] += target_local[2];
+        child_local[3] += target_local[3];
+        ps_impl_dispatch_downward(ctx, child, arrs, curr_depth + 1,
+                                  target_depth);
+    }
+}
+
+#endif // PS_MULTITHREADING
+
 ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
                            uint32_t* morton_codes, float root_cx, float root_cy,
                            float root_cz, float root_hw) {
