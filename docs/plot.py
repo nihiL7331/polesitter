@@ -4,7 +4,8 @@ import pandas as pd
 COL_TEXT = '#C9D1D9'
 COL_BORDER = '#8B949E'
 COL_NAIVE = '#D29922'
-COL_FMM = '#1F6FEB'
+COL_FMM_ST = '#1F6FEB'
+COL_FMM_MT = '#8957E5'
 COL_BG = '#21262D'
 
 plt.rcParams.update({
@@ -26,12 +27,14 @@ plt.rcParams.update({
 data = pd.read_csv('results.csv')
 N = data['N']
 t_direct = data['Direct_Time']
-t_fmm = data['FMM_Time']
+t_fmm_st = data['FMM_Time_ST']
+t_fmm_mt = data['FMM_Time_MT']
 
 fig, ax = plt.subplots(figsize=(8, 5))
 
 ax.plot(N, t_direct, marker='o', linewidth=2.5, color=COL_NAIVE, label='naive $\mathcal{O}(N^2)$')
-ax.plot(N, t_fmm, marker='o', linewidth=2.5, color=COL_FMM, label='FMM $\mathcal{O}(N)$')
+ax.plot(N, t_fmm_st, marker='o', linewidth=2.5, color=COL_FMM_ST, label='FMM $\mathcal{O}(N)$ 1-core')
+ax.plot(N, t_fmm_mt, marker='o', linewidth=2.5, color=COL_FMM_MT, label='FMM $\mathcal{O}(N)$ 8-core')
 
 ax.set_title('perf scaling: direct evaluation vs FMM', fontsize=14, pad=15, fontweight='bold')
 ax.set_xlabel('# of particles (N)', fontsize=12)
@@ -48,16 +51,14 @@ plt.savefig('performance_graph.svg', dpi=300, transparent=True)
 
 fig_log, ax_log = plt.subplots(figsize=(8, 5))
 
-ax_log.plot(N, t_direct, marker='o', linewidth=2.5, color=COL_NAIVE,
-label='naive $\mathcal{O}(N^2)$')
-ax_log.plot(N, t_fmm, marker='o', linewidth=2.5, color=COL_FMM,
-label='FMM $\mathcal{O}(N)$')
+ax_log.plot(N, t_direct, marker='o', linewidth=2.5, color=COL_NAIVE,  label='naive $\mathcal{O}(N^2)$')
+ax_log.plot(N, t_fmm_st, marker='o', linewidth=2.5, color=COL_FMM_ST, label='FMM $\mathcal{O}(N)$ 1-core')
+ax_log.plot(N, t_fmm_mt, marker='o', linewidth=2.5, color=COL_FMM_MT, label='FMM $\mathcal{O}(N) 8-core')
 
 ax_log.set_xscale('log')
 ax_log.set_yscale('log')
 
-ax_log.set_title('algorithmic scaling (log-log)', fontsize=14, pad=15,
-fontweight='bold')
+ax_log.set_title('algorithmic scaling (log-log)', fontsize=14, pad=15, fontweight='bold')
 ax_log.set_xlabel('# of particles (N)', fontsize=12)
 ax_log.set_ylabel('exec time (secs)', fontsize=12)
 
