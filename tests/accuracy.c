@@ -8,7 +8,7 @@
 
 #define ARENA_SIZE   (1024ULL * 1024ULL * 32ULL)
 #define SOFTENING_SQ 0.1F
-#define THETA        3.4641F // sqrt of 12
+#define THETA        2.0F
 
 static int g_failures = 0;
 
