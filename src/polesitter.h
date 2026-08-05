@@ -557,8 +557,9 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src,
                                          float theta);
 static void ps_impl_fmm_downward_pass(ps_node_t*                node,
                                       const ps_particle_arrs_t* arrs);
-static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
-                                 const ps_particle_arrs_t* arrs);
+static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
+                                 ps_node_t* src, const ps_particle_arrs_t* arrs,
+                                 float theta);
 static void ps_impl_radix_map(ps_context_t* ctx, uint32_t chunk_id,
                               size_t start_idx, size_t end_idx);
 static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
@@ -1142,8 +1143,9 @@ static void ps_impl_fmm_downward_pass(ps_node_t*                node,
 
 // pass 5
 // p2p, dual-tree traversal to calc N-body forces for near-field neighbors
-static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
-                                 const ps_particle_arrs_t* arrs) {
+static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
+                                 ps_node_t* src, const ps_particle_arrs_t* arrs,
+                                 float theta) {
     if (!target || !src) {
         return;
     }
@@ -1153,11 +1155,10 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
     float dz      = src->z - target->z;
     float dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
 
-    float theta  = 1.0F;
     float hw_sum = target->half_width + src->half_width;
 
     // if well-separated M2L already handled it
-    if (dist_sq > 12.0F * (theta * theta) * (hw_sum * hw_sum)) {
+    if (dist_sq > (theta * theta) * (hw_sum * hw_sum)) {
         return;
     }
 
