@@ -614,6 +614,7 @@ static void ps_impl_pool_submit(ps_context_t* ctx, ps_job_t job) {
 
 // no-op if single-threaded
 static void ps_impl_pool_wait(ps_context_t* ctx) {
+    (void)ctx;
 #ifdef PS_MULTITHREADING
 
     ps_thrd_pool_t* pool = &ctx->pool;
