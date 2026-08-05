@@ -406,17 +406,14 @@ typedef struct {
     ps_thrd_t thrds[PS_MAX_THRDS];
     uint32_t  thrd_cnt;
 
-    ps_job_t queue[PS_MAX_JOBS];
-    int      hd;
-    int      tl;
-    int      cnt;
-    int      active_jobs;
-    int      shutdown_flag;
+    ps_job_t     queue[PS_MAX_JOBS];
+    volatile int hd;
+    volatile int tl;
+    volatile int cnt;
+    volatile int active_jobs;
+    volatile int shutdown_flag;
 
-    ps_mtx_t  lock;
-    ps_cond_t work_cond;  // workers wait for jobs
-    ps_cond_t space_cond; // main thread waits for space in queue
-    ps_cond_t done_cond;  // main thread waits for active_jobs == 0
+    ps_spinlock_t lock;
 } ps_thrd_pool_t;
 
 // payload passed to each worker thread when it spawns
@@ -591,87 +588,89 @@ static inline void ps_impl_exec_job(ps_context_t* ctx, ps_job_t* job) {
 static void ps_impl_pool_submit(ps_context_t* ctx, ps_job_t job) {
 #ifdef PS_MULTITHREADING
 
-    ps_thrd_pool_t* pool = &ctx->pool;
-    ps_mtx_lock(&pool->lock);
+    if (ctx->pool.thrd_cnt > 0) {
+        ps_thrd_pool_t* pool = &ctx->pool;
 
-    // block if buffer is full
-    while (pool->cnt == PS_MAX_JOBS && !pool->shutdown_flag) {
-        ps_cond_wait(&pool->space_cond, &pool->lock);
+        // block if buffer is full
+        while (pool->cnt == PS_MAX_JOBS && !pool->shutdown_flag) {
+            PS_YIELD();
+        }
+
+        // enqueue
+        ps_spin_lock(&pool->lock);
+        pool->queue[pool->tl] = job;
+        pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
+        pool->cnt++;
+        ps_spin_unlock(&pool->lock);
+        return;
     }
 
-    // enqueue
-    pool->queue[pool->tl] = job;
-    pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
-    pool->cnt++;
-
-    ps_cond_signal(&pool->work_cond);
-    ps_mtx_unlock(&pool->lock);
-
-#else // single-threaded
+#endif
+    // single-threaded
 
     job.thrd_id = 0;
     ps_impl_exec_job(ctx, &job);
-
-#endif
 }
 
 // no-op if single-threaded
 static void ps_impl_pool_wait(ps_context_t* ctx) {
     (void)ctx;
 #ifdef PS_MULTITHREADING
-
     ps_thrd_pool_t* pool = &ctx->pool;
-    ps_mtx_lock(&pool->lock);
 
-    // main thrd blocks til queue is empty & no workers are active
-    while (pool->cnt > 0 || pool->active_jobs > 0) {
-        ps_cond_wait(&pool->done_cond, &pool->lock);
+    while (1) {
+        if (pool->cnt == 0 && pool->active_jobs == 0) {
+
+            ps_spin_lock(&pool->lock);
+            int done = (pool->cnt == 0 && pool->active_jobs == 0);
+            ps_spin_unlock(&pool->lock);
+
+            if (done)
+                return;
+        }
+        PS_YIELD();
     }
-
-    ps_mtx_unlock(&pool->lock);
-
-#endif // PS_MULTITHREADING
+#endif
 }
+
+#ifdef PS_MULTITHREADING
 
 static PS_THRD_RET_TYPE ps_impl_worker_loop(void* arg) {
     ps_worker_arg_t* w_arg = (ps_worker_arg_t*)arg;
     ps_thrd_pool_t*  pool  = w_arg->pool;
 
     while (1) {
-        ps_mtx_lock(&pool->lock);
-
         while (pool->cnt == 0 && !pool->shutdown_flag) {
-            ps_cond_wait(&pool->work_cond, &pool->lock);
+            PS_YIELD();
         }
 
-        if (pool->shutdown_flag && pool->cnt == 0) {
-            ps_mtx_unlock(&pool->lock);
-            break;
+        ps_spin_lock(&pool->lock);
+
+        if (pool->cnt == 0) {
+            ps_spin_unlock(&pool->lock);
+            if (pool->shutdown_flag) {
+                break;
+            }
+
+            continue;
         }
 
         // dequeue
         ps_job_t job = pool->queue[pool->hd];
         pool->hd     = (pool->hd + 1) % PS_MAX_JOBS;
-        pool->cnt--;
-        pool->active_jobs++;
 
-        // signal main thrd that there's space in queue
-        ps_cond_signal(&pool->space_cond);
-        ps_mtx_unlock(&pool->lock);
+        pool->active_jobs++;
+        pool->cnt--;
+        ps_spin_unlock(&pool->lock);
 
         // execute the job
         job.thrd_id = w_arg->thrd_id;
         ps_impl_exec_job(w_arg->ctx, &job);
 
         // mark done
-        ps_mtx_lock(&pool->lock);
+        ps_spin_lock(&pool->lock);
         pool->active_jobs--;
-
-        if (pool->cnt == 0 && pool->active_jobs == 0) {
-            ps_cond_signal(&pool->done_cond);
-        }
-
-        ps_mtx_unlock(&pool->lock);
+        ps_spin_unlock(&pool->lock);
     }
 
     return PS_THRD_RET_VAL;
@@ -694,10 +693,7 @@ static int ps_impl_pool_init(ps_context_t* ctx, uint32_t num_thrds) {
         pool->thrd_cnt = 1;
     }
 
-    ps_mtx_init(&pool->lock);
-    ps_cond_init(&pool->work_cond);
-    ps_cond_init(&pool->space_cond);
-    ps_cond_init(&pool->done_cond);
+    pool->lock = 0;
 
     for (uint32_t i = 0; i < pool->thrd_cnt; ++i) {
         worker_args[i].pool    = pool;
@@ -706,6 +702,7 @@ static int ps_impl_pool_init(ps_context_t* ctx, uint32_t num_thrds) {
 
         if (ps_thrd_create(&pool->thrds[i], ps_impl_worker_loop,
                            &worker_args[i]) != 0) {
+
             return PS_ETHRD;
         }
     }
