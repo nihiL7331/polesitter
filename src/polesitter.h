@@ -208,6 +208,14 @@ typedef DWORD(WINAPI* ps_thrd_func_t)(void*);
 #define PS_THRD_RET_TYPE DWORD WINAPI
 #define PS_THRD_RET_VAL  0
 
+#if defined(_WIN64)
+#define ps_atomic_fetch_add_size_t(ptr, val)                                   \
+    (size_t)InterlockedExchangeAdd64((volatile LONG64*)(ptr), (LONG64)(val))
+#else
+#define ps_atomic_fetch_add_size_t(ptr, val)                                   \
+    (size_t)InterlockedExchangeAdd((volatile LONG*)(ptr), (LONG)(val))
+#endif
+
 #else // POSIX
 
 #include <pthread.h>
@@ -219,6 +227,35 @@ typedef void* (*ps_thrd_func_t)(void*);
 
 #define PS_THRD_RET_TYPE void*
 #define PS_THRD_RET_VAL  NULL
+
+#define ps_atomic_fetch_add_size_t(ptr, val) __sync_fetch_and_add((ptr), (val))
+
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) ||             \
+    defined(_M_IX86)
+#define PS_YIELD() _mm_pause()
+#elif defined(__aarch64__) || defined(_M_ARM64) || defined(__arm__)
+#define PS_YIELD() __asm__ volatile("yield" ::: "memory")
+#else
+#define PS_YIELD()
+#endif
+
+typedef volatile int ps_spinlock_t;
+
+#ifdef _WIN32
+#define ps_spin_lock(lock)                                                     \
+    while (InterlockedExchange((volatile LONG*)(lock), 1)) {                   \
+        while (*(lock))                                                        \
+            PS_YIELD();                                                        \
+    }
+#define ps_spin_unlock(lock) InterlockedExchange((volatile LONG*)(lock), 0)
+#else
+#define ps_spin_lock(lock)                                                     \
+    while (__sync_lock_test_and_set((lock), 1)) {                              \
+        while (*(lock))                                                        \
+            PS_YIELD();                                                        \
+    }
+#define ps_spin_unlock(lock) __sync_lock_release(lock)
+#endif
 
 #endif
 
