@@ -1695,7 +1695,7 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg) {
     ctx->root         = NULL;
     ctx->theta        = (cfg->theta > 0.0F) ? cfg->theta : 1.0F;
 
-    uint32_t total_thrds = cfg->thrd_cnt;
+    uint32_t total_thrds = (uint32_t)cfg->thrd_cnt;
     if (total_thrds > PS_MAX_THRDS + 1) {
         total_thrds = PS_MAX_THRDS + 1;
     } else if (total_thrds < 1) {
