@@ -328,6 +328,8 @@ typedef enum {
     PS_JOB_INTERACTION,
     PS_JOB_DOWNWARD,
     PS_JOB_P2P,
+    PS_JOB_RADIX_MAP,
+    PS_JOB_RADIX_SCATTER,
 } ps_job_type_t;
 
 typedef struct {
@@ -344,8 +346,9 @@ typedef struct {
 
         // for radix/tree
         struct {
-            size_t start_idx;
-            size_t end_idx;
+            uint32_t start_idx;
+            uint32_t end_idx;
+            uint32_t chunk_id;
         } array;
     } data;
 } ps_job_t;
@@ -378,10 +381,33 @@ typedef struct {
 
 #endif // PS_MULTITHREADING
 
+// holds the shared state for the radix pipeline
+typedef struct {
+    uint32_t* m_src;
+    uint32_t* m_dst;
+    uint32_t* id_src;
+    uint32_t* id_dst;
+    float*    x_src;
+    float*    x_dst;
+    float*    y_src;
+    float*    y_dst;
+    float*    z_src;
+    float*    z_dst;
+    float*    mass_src;
+    float*    mass_dst;
+
+    uint8_t pass; // 0-3
+
+    // each thrd gets its own 256-bin histogram and off array
+    uint32_t hists[PS_MAX_THRDS + 1][256];
+    uint32_t offs[PS_MAX_THRDS + 1][256];
+} ps_radix_state_t;
+
 struct ps_context {
-    ps_node_t* root;
-    float      theta;
-    ps_arena_t arenas[PS_MAX_THRDS + 1];
+    ps_node_t*       root;
+    float            theta;
+    ps_arena_t       arenas[PS_MAX_THRDS + 1];
+    ps_radix_state_t radix_state;
 
 #ifdef PS_MULTITHREADING
 
@@ -489,6 +515,10 @@ static void ps_impl_fmm_downward_pass(ps_node_t*                node,
                                       const ps_particle_arrs_t* arrs);
 static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
                                  const ps_particle_arrs_t* arrs);
+static void ps_impl_radix_map(ps_context_t* ctx, uint32_t chunk_id,
+                              size_t start_idx, size_t end_idx);
+static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
+                                  size_t start_idx, size_t end_idx);
 
 static inline void ps_impl_exec_job(ps_context_t* ctx, ps_job_t* job) {
     if (job->type == PS_JOB_UPWARD) {
@@ -501,54 +531,63 @@ static inline void ps_impl_exec_job(ps_context_t* ctx, ps_job_t* job) {
     } else if (job->type == PS_JOB_P2P) {
         ps_impl_fmm_p2p_pass(job->data.fmm.target, job->data.fmm.src,
                              job->data.fmm.arrs);
+    } else if (job->type == PS_JOB_RADIX_MAP) {
+        ps_impl_radix_map(ctx, job->data.array.chunk_id,
+                          job->data.array.start_idx, job->data.array.end_idx);
+    } else if (job->type == PS_JOB_RADIX_SCATTER) {
+        ps_impl_radix_scatter(ctx, job->data.array.chunk_id,
+                              job->data.array.start_idx,
+                              job->data.array.end_idx);
     }
 }
 
-// static void ps_impl_pool_submit(ps_context_t* ctx, ps_job_t job) {
-// #ifdef PS_MULTITHREADING
-//
-//     ps_thrd_pool_t* pool = &ctx->pool;
-//     ps_mtx_lock(&pool->lock);
-//
-//     // block if buffer is full
-//     while (pool->cnt == PS_MAX_JOBS && !pool->shutdown_flag) {
-//         ps_cond_wait(&pool->space_cond, &pool->lock);
-//     }
-//
-//     // enqueue
-//     pool->queue[pool->tl] = job;
-//     pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
-//     pool->cnt++;
-//
-//     ps_cond_signal(&pool->work_cond);
-//     ps_mtx_unlock(&pool->lock);
-//
-// #else // single-threaded
-//
-//     job.thrd_id = 0;
-//     ps_impl_exec_job(ctx, &job);
-//
-// #endif
-// }
-//
-// // no-op if single-threaded
-// static void ps_impl_pool_wait(ps_thrd_pool_t* pool) {
-// #ifdef PS_MULTITHREADING
-//
-//     ps_mtx_lock(&pool->lock);
-//
-//     // main thrd blocks til queue is empty & no workers are active
-//     while (pool->cnt > 0 || pool->active_jobs > 0) {
-//         ps_cond_wait(&pool->done_cond, &pool->lock);
-//     }
-//
-//     ps_mtx_unlock(&pool->lock);
-//
-// #endif // PS_MULTITHREADING
-// }
+static void ps_impl_pool_submit(ps_context_t* ctx, ps_job_t job) {
+#ifdef PS_MULTITHREADING
+
+    ps_thrd_pool_t* pool = &ctx->pool;
+    ps_mtx_lock(&pool->lock);
+
+    // block if buffer is full
+    while (pool->cnt == PS_MAX_JOBS && !pool->shutdown_flag) {
+        ps_cond_wait(&pool->space_cond, &pool->lock);
+    }
+
+    // enqueue
+    pool->queue[pool->tl] = job;
+    pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
+    pool->cnt++;
+
+    ps_cond_signal(&pool->work_cond);
+    ps_mtx_unlock(&pool->lock);
+
+#else // single-threaded
+
+    job.thrd_id = 0;
+    ps_impl_exec_job(ctx, &job);
+
+#endif
+}
+
+// no-op if single-threaded
+static void ps_impl_pool_wait(ps_context_t* ctx) {
+#ifdef PS_MULTITHREADING
+
+    ps_thrd_pool_t* pool = &ctx->pool;
+    ps_mtx_lock(&pool->lock);
+
+    // main thrd blocks til queue is empty & no workers are active
+    while (pool->cnt > 0 || pool->active_jobs > 0) {
+        ps_cond_wait(&pool->done_cond, &pool->lock);
+    }
+
+    ps_mtx_unlock(&pool->lock);
+
+#endif // PS_MULTITHREADING
+}
 
 static PS_THRD_RET_TYPE ps_impl_worker_loop(void* arg) {
-    ps_thrd_pool_t* pool = (ps_thrd_pool_t*)arg;
+    ps_worker_arg_t* w_arg = (ps_worker_arg_t*)arg;
+    ps_thrd_pool_t*  pool  = w_arg->pool;
 
     while (1) {
         ps_mtx_lock(&pool->lock);
@@ -572,8 +611,9 @@ static PS_THRD_RET_TYPE ps_impl_worker_loop(void* arg) {
         ps_cond_signal(&pool->space_cond);
         ps_mtx_unlock(&pool->lock);
 
-        // TODO: exec
-        (void)job;
+        // execute the job
+        job.thrd_id = w_arg->thrd_id;
+        ps_impl_exec_job(w_arg->ctx, &job);
 
         // mark done
         ps_mtx_lock(&pool->lock);
@@ -616,7 +656,8 @@ static int ps_impl_pool_init(ps_context_t* ctx, uint32_t num_thrds) {
         worker_args[i].ctx     = ctx;
         worker_args[i].thrd_id = i + 1;
 
-        if (ps_thrd_create(&pool->thrds[i], ps_impl_worker_loop, pool) != 0) {
+        if (ps_thrd_create(&pool->thrds[i], ps_impl_worker_loop,
+                           &worker_args[i]) != 0) {
             return PS_ETHRD;
         }
     }
@@ -1279,6 +1320,51 @@ static void ps_impl_fmm_p2p_pass(ps_node_t* target, ps_node_t* src,
     }
 }
 
+// generates a histogram for a threads chunk of sorted memory
+static void ps_impl_radix_map(ps_context_t* ctx, uint32_t chunk_id,
+                              size_t start_idx, size_t end_idx) {
+    int             shift = ctx->radix_state.pass * 8;
+    const uint32_t* m_src = ctx->radix_state.m_src;
+    uint32_t*       hist  = ctx->radix_state.hists[chunk_id];
+
+    // clear local histogram
+    for (int i = 0; i < 256; ++i) {
+        hist[i] = 0;
+    }
+
+    // count frequencies for this threads chunk
+    for (size_t i = start_idx; i < end_idx; ++i) {
+        uint8_t bucket = (m_src[i] >> shift) & 0xFF;
+        hist[bucket]++;
+    }
+}
+
+static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
+                                  size_t start_idx, size_t end_idx) {
+    int               shift = ctx->radix_state.pass * 8;
+    ps_radix_state_t* rs    = &ctx->radix_state;
+
+    // make a local copy of this threads start offsets
+    // so we can increment them safely in regs
+    uint32_t local_offs[256];
+    for (int i = 0; i < 256; ++i) {
+        local_offs[i] = rs->offs[chunk_id][i];
+    }
+
+    // scatter the data to dest slots
+    for (size_t i = start_idx; i < end_idx; ++i) {
+        uint8_t  bucket  = (rs->m_src[i] >> shift) & 0xFF;
+        uint32_t dst_idx = local_offs[bucket]++;
+
+        rs->m_dst[dst_idx]    = rs->m_src[i];
+        rs->id_dst[dst_idx]   = rs->id_src[i];
+        rs->x_dst[dst_idx]    = rs->x_src[i];
+        rs->y_dst[dst_idx]    = rs->y_src[i];
+        rs->z_dst[dst_idx]    = rs->z_src[i];
+        rs->mass_dst[dst_idx] = rs->mass_src[i];
+    }
+}
+
 #define PS_IMPL_SWAP_PTR(type, a, b)                                           \
     do {                                                                       \
         type tmp = a;                                                          \
@@ -1313,62 +1399,89 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx, uint32_t thrd_id,
     float* mass_tmp =
         (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
 
-    if (!m_tmp || !x_tmp || !y_tmp || !z_tmp || !mass_tmp) {
+    if (!m_tmp || !id_tmp || !x_tmp || !y_tmp || !z_tmp || !mass_tmp) {
         return PS_EOOM;
     }
 
-    uint32_t* m_src    = morton_codes;
-    uint32_t* m_dst    = m_tmp;
-    uint32_t* id_src   = arrs->id;
-    uint32_t* id_dst   = id_tmp;
-    float*    x_src    = arrs->x;
-    float*    x_dst    = x_tmp;
-    float*    y_src    = arrs->y;
-    float*    y_dst    = y_tmp;
-    float*    z_src    = arrs->z;
-    float*    z_dst    = z_tmp;
-    float*    mass_src = arrs->mass;
-    float*    mass_dst = mass_tmp;
+    ps_radix_state_t* rs = &ctx->radix_state;
+    rs->m_src            = morton_codes;
+    rs->m_dst            = m_tmp;
+    rs->id_src           = arrs->id;
+    rs->id_dst           = id_tmp;
+    rs->x_src            = arrs->x;
+    rs->x_dst            = x_tmp;
+    rs->y_src            = arrs->y;
+    rs->y_dst            = y_tmp;
+    rs->z_src            = arrs->z;
+    rs->z_dst            = z_tmp;
+    rs->mass_src         = arrs->mass;
+    rs->mass_dst         = mass_tmp;
+
+    // how many chunks split into
+#ifdef PS_MULTITHREADING
+    uint32_t num_chunks = ctx->pool.thrd_cnt;
+#else
+    uint32_t num_chunks = 1;
+#endif
+
+#define DEPLOY_JOB(job_type)                                                   \
+    for (uint32_t i = 0; i < num_chunks; ++i) {                                \
+        size_t start = i * chunk_size;                                         \
+        size_t end   = start + chunk_size;                                     \
+        if (end > cnt) {                                                       \
+            end = cnt;                                                         \
+        }                                                                      \
+        if (start >= cnt) {                                                    \
+            break;                                                             \
+        }                                                                      \
+        ps_job_t job;                                                          \
+        job.type                 = job_type;                                   \
+        job.data.array.start_idx = start;                                      \
+        job.data.array.end_idx   = end;                                        \
+        job.data.array.chunk_id  = i;                                          \
+        ps_impl_pool_submit(ctx, job);                                         \
+    }
+
+    // ceiling div so last chunk takes remainder
+    size_t chunk_size = (cnt + num_chunks - 1) / num_chunks;
 
     // 4 passes of 8b radix sort
     for (int pass = 0; pass < 4; ++pass) {
-        uint32_t counts[256]  = {0};
-        uint32_t offsets[256] = {0};
-        int      shift        = pass * 8;
+        rs->pass = pass;
 
-        // count frequencies of current 8b chunk
-        for (size_t i = 0; i < cnt; ++i) {
-            uint8_t bucket = (m_src[i] >> shift) & 0xFF;
-            counts[bucket]++;
+        // local histograms/map
+        DEPLOY_JOB(PS_JOB_RADIX_MAP);
+
+        // wait for all threads to finish mapping
+        ps_impl_pool_wait(ctx);
+
+        // reduce
+        // calculates exactly where each thread should start writing for each
+        // bucket
+        uint32_t run_off = 0;
+        for (int bucket = 0; bucket < 256; ++bucket) {
+            for (uint32_t chunk = 0; chunk < num_chunks; ++chunk) {
+                rs->offs[chunk][bucket] = run_off;
+                run_off += rs->hists[chunk][bucket];
+            }
         }
 
-        // calc prefix sums to find the start off per bucket
-        offsets[0] = 0;
-        for (int i = 1; i < 256; ++i) {
-            offsets[i] = offsets[i - 1] + counts[i - 1];
-        }
+        // scatter
+        DEPLOY_JOB(PS_JOB_RADIX_SCATTER);
 
-        // distribute the data into dest buffers
-        for (size_t i = 0; i < cnt; ++i) {
-            uint8_t  bucket  = (m_src[i] >> shift) & 0xFF;
-            uint32_t dst_idx = offsets[bucket]++;
+        // wait for all data to be scattered
+        ps_impl_pool_wait(ctx);
 
-            m_dst[dst_idx]    = m_src[i];
-            id_dst[dst_idx]   = id_src[i];
-            x_dst[dst_idx]    = x_src[i];
-            y_dst[dst_idx]    = y_src[i];
-            z_dst[dst_idx]    = z_src[i];
-            mass_dst[dst_idx] = mass_src[i];
-        }
-
-        // pingpong pointers for next pass
-        PS_IMPL_SWAP_PTR(uint32_t*, m_src, m_dst);
-        PS_IMPL_SWAP_PTR(uint32_t*, id_src, id_dst);
-        PS_IMPL_SWAP_PTR(float*, x_src, x_dst);
-        PS_IMPL_SWAP_PTR(float*, y_src, y_dst);
-        PS_IMPL_SWAP_PTR(float*, z_src, z_dst);
-        PS_IMPL_SWAP_PTR(float*, mass_src, mass_dst);
+        // ping-pong pointers
+        PS_IMPL_SWAP_PTR(uint32_t*, rs->m_src, rs->m_dst);
+        PS_IMPL_SWAP_PTR(uint32_t*, rs->id_src, rs->id_dst);
+        PS_IMPL_SWAP_PTR(float*, rs->x_src, rs->x_dst);
+        PS_IMPL_SWAP_PTR(float*, rs->y_src, rs->y_dst);
+        PS_IMPL_SWAP_PTR(float*, rs->z_src, rs->z_dst);
+        PS_IMPL_SWAP_PTR(float*, rs->mass_src, rs->mass_dst);
     }
+
+#undef DEPLOY_JOB
 
     // reclaim memory
     arena->off = tmp_off;
