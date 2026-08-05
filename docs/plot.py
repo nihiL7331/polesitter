@@ -53,7 +53,7 @@ fig_log, ax_log = plt.subplots(figsize=(8, 5))
 
 ax_log.plot(N, t_direct, marker='o', linewidth=2.5, color=COL_NAIVE,  label='naive $\mathcal{O}(N^2)$')
 ax_log.plot(N, t_fmm_st, marker='o', linewidth=2.5, color=COL_FMM_ST, label='FMM $\mathcal{O}(N)$ 1-core')
-ax_log.plot(N, t_fmm_mt, marker='o', linewidth=2.5, color=COL_FMM_MT, label='FMM $\mathcal{O}(N) 8-core')
+ax_log.plot(N, t_fmm_mt, marker='o', linewidth=2.5, color=COL_FMM_MT, label='FMM $\mathcal{O}(N)$ 8-core')
 
 ax_log.set_xscale('log')
 ax_log.set_yscale('log')
