@@ -4,10 +4,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define PS_MULTITHREADING
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
 #define THETA 3.4641F // sqrt of 12
+
+#if defined(_MSC_VER)
+
+#include <malloc.h>
+#define ALIGNED_MALLOC(size, align) _aligned_malloc((size), (align))
+#define ALIGNED_FREE(ptr)           _aligned_free((ptr))
+
+#else
+
+#include <mm_malloc.h>
+#define ALIGNED_MALLOC(size, align) _mm_malloc((size), (align))
+#define ALIGNED_FREE(ptr)           _mm_free((ptr))
+
+#endif
 
 static void ps_assert(int cond, const char* expr_str, const char* msg,
                       const char* file, int line) {
@@ -57,105 +72,136 @@ void test_morton_encoding(void) {
 }
 
 void test_arena_allocator(void) {
-    void* buffer = malloc(64);
+    size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    size_t total_mem = ctx_size + 256;
+
+    void* buffer = ALIGNED_MALLOC(total_mem, 64);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
-    ps_arena_t arena;
-    ps_arena_init(&arena, buffer, 64);
+    ps_context_t* ctx = NULL;
+    ps_config_t   cfg = {buffer, total_mem, 4, THETA, 4};
 
-    TEST_ASSERT(arena.cap == 64, "Arena capacity mismatch");
-    TEST_ASSERT(arena.off == 0, "Arena offset should start at 0");
+    ps_result_t res = ps_init(&ctx, &cfg);
+    TEST_ASSERT(res == PS_OK, "Failed to initialize context");
+    TEST_ASSERT(ctx != NULL, "Context pointer is null");
+
+    TEST_ASSERT(ctx->arena.cap == total_mem - ctx_size - 128,
+                "Arena capacity mismatch");
+    TEST_ASSERT(ctx->arena.off == 0, "Arena offset should start at 0");
 
     // basic alloc with SIMD align
-    void* ptr1 = ps_arena_alloc(&arena, 10, 16);
+    void* ptr1 = ps_impl_arena_alloc(ctx, 10);
     TEST_ASSERT(ptr1 != NULL, "1st allocation failed");
-    TEST_ASSERT((uintptr_t)ptr1 % 16 == 0, "1st allocation not aligned to 16B");
+    TEST_ASSERT((uintptr_t)ptr1 % 64 == 0, "1st allocation not aligned to 64B");
 
     // padding test
-    void* ptr2 = ps_arena_alloc(&arena, 10, 16);
+    void* ptr2 = ps_impl_arena_alloc(ctx, 10);
     TEST_ASSERT(ptr2 != NULL, "2nd allocation failed");
-    TEST_ASSERT((uintptr_t)ptr2 % 16 == 0, "2nd allocation not aligned to 16B");
+    TEST_ASSERT((uintptr_t)ptr2 % 64 == 0, "2nd allocation not aligned to 64B");
 
-    // ptr2 should be 16B after ptr1
-    TEST_ASSERT((uintptr_t)ptr2 == (uintptr_t)ptr1 + 16,
+    // ptr2 should be 64B after ptr1
+    TEST_ASSERT((uintptr_t)ptr2 == (uintptr_t)ptr1 + 64,
                 "2nd allocation not 16B after 1st allocation");
 
     // oom test
-    void* ptr3 = ps_arena_alloc(&arena, 64, 16);
+    void* ptr3 = ps_impl_arena_alloc(ctx, 64);
     TEST_ASSERT(ptr3 == NULL, "3rd allocation should have failed due to OOM");
 
     // clear test
-    ps_arena_clear(&arena);
-    TEST_ASSERT(arena.off == 0, "Arena offset should be reset to 0");
+    ps_impl_arena_clear(&ctx->arena);
+    TEST_ASSERT(ctx->arena.off == 0, "Arena offset should be reset to 0");
 
     // reusability test
-    void* ptr4 = ps_arena_alloc(&arena, 32, 16);
+    void* ptr4 = ps_impl_arena_alloc(ctx, 32);
     TEST_ASSERT(ptr4 != NULL, "4th allocation failed after clear");
     TEST_ASSERT(
         ptr4 == ptr1,
         "4th allocation should reuse the same memory as 1st allocation");
 
-    free(buffer);
+    ps_destroy(ctx);
+    ALIGNED_FREE(buffer);
 }
 
 void test_octree_insertion(void) {
-    void* buffer = malloc(1024ULL * 4);
+    size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    size_t total_mem = ctx_size + (1024ULL * 16);
+
+    void* buffer = malloc(total_mem);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 4, THETA};
+    ps_config_t   cfg = {buffer, total_mem, 2, THETA, 4};
 
     ps_result_t res = ps_init(&ctx, &cfg);
     TEST_ASSERT(res == PS_OK, "Failed to initialize context");
     TEST_ASSERT(ctx != NULL, "Context pointer is null");
 
     // alloc the root node directly from arena
-    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
+    ctx->root = ps_impl_alloc_node(ctx);
     TEST_ASSERT(ctx->root != NULL, "Failed to allocate root node");
-    ps_impl_node_init(ctx->root);
 
-    // morton code is 0, tree should traverse down children[0] at every level
-    uint32_t morton_zero = ps_impl_morton_encode(0, 0, 0);
-    res = ps_impl_tree_insert(&ctx->arena, ctx->root, morton_zero, 42);
-    TEST_ASSERT(res == PS_OK, "Failed to insert origin particle");
+    // seed geometry for hw
+    ctx->root->x          = 0.0F;
+    ctx->root->y          = 0.0F;
+    ctx->root->z          = 0.0F;
+    ctx->root->half_width = 10.0F;
+
+    // create a sorted array containing both particles
+    uint32_t morton_zero     = ps_impl_morton_encode(0, 0, 0);
+    uint32_t morton_max      = ps_impl_morton_encode(1023, 1023, 1023);
+    uint32_t morton_codes[2] = {morton_zero, morton_max};
+
+    // bind to radix_state so worker threads can read it
+    ctx->radix_state.m_src = morton_codes;
+
+    ps_impl_build_tree(ctx, 0, ctx->root, 0, 0, 2, morton_codes);
+    ps_impl_pool_wait(ctx);
 
     ps_node_t* curr = ctx->root;
-    for (int i = 0; i < 10 /* PS_MAX_DEPTH */; ++i) {
-        TEST_ASSERT(curr->children[0] != NULL, "Missing child in origin path");
-        curr = curr->children[0];
+    while (!(curr->data.leaf.is_leaf & 1)) {
+        ps_node_t* curr_child =
+            ps_impl_get_node(ctx, curr->data.children_offs[0]);
+        TEST_ASSERT(curr_child != NULL, "Missing child in origin path");
+        curr = curr_child;
     }
-    TEST_ASSERT(curr->is_leaf, "Bottom node is not marked as leaf");
-    TEST_ASSERT(curr->particle_cnt == 1, "Leaf particle count is wrong");
-    TEST_ASSERT(curr->first_particle_idx == 42,
-                "Leaf stored wrong particle idx");
 
-    // maximum bounds test, tree should traverse down children[7] at every level
-    uint32_t morton_max = ps_impl_morton_encode(1023, 1023, 1023);
-    res = ps_impl_tree_insert(&ctx->arena, ctx->root, morton_max, 99);
-    TEST_ASSERT(res == PS_OK, "Failed to insert max bounds particle");
+    TEST_ASSERT(curr->data.leaf.is_leaf, "Bottom node is not marked as leaf");
+    TEST_ASSERT(curr->data.leaf.particle_cnt == 1,
+                "Leaf particle count is wrong");
+    TEST_ASSERT(curr->data.leaf.first_particle_idx == 0,
+                "Leaf stored wrong particle idx");
 
     curr = ctx->root;
-    for (int i = 0; i < 10 /* PS_MAX_DEPTH */; ++i) {
-        TEST_ASSERT(curr->children[7] != NULL,
-                    "Missing child in max bounds path");
-        curr = curr->children[7];
+    while (!(curr->data.leaf.is_leaf & 1)) {
+        ps_node_t* curr_child =
+            ps_impl_get_node(ctx, curr->data.children_offs[7]);
+        TEST_ASSERT(curr_child != NULL, "Missing child in max bounds path");
+        curr = curr_child;
     }
 
-    TEST_ASSERT(curr->is_leaf, "Bottom node is not marked as leaf");
-    TEST_ASSERT(curr->particle_cnt == 1, "Leaf particle count is wrong");
-    TEST_ASSERT(curr->first_particle_idx == 99,
+    TEST_ASSERT(curr->data.leaf.is_leaf, "Bottom node is not marked as leaf");
+    TEST_ASSERT(curr->data.leaf.particle_cnt == 1,
+                "Leaf particle count is wrong");
+    TEST_ASSERT(curr->data.leaf.first_particle_idx == 1,
                 "Leaf stored wrong particle idx");
 
+    ps_destroy(ctx);
     free(buffer);
 }
 
 void test_radix_sort(void) {
-    void* buffer = malloc(1024ULL * 4);
+    size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    size_t total_mem = ctx_size + (1024ULL * 1024);
+
+    void* buffer = ALIGNED_MALLOC(total_mem, 64);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 4, THETA};
-    ps_init(&ctx, &cfg);
+    ps_config_t   cfg = {buffer, total_mem, 4, THETA, 4};
+
+    ps_result_t res = ps_init(&ctx, &cfg);
+    TEST_ASSERT(res == PS_OK, "Failed to initialize context");
+    TEST_ASSERT(ctx != NULL, "Context pointer is null");
 
     uint32_t morton_codes[4] = {999, 10, 500, 42};
     uint32_t ids[4]          = {0, 1, 2, 3};
@@ -167,7 +213,8 @@ void test_radix_sort(void) {
 
     ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, ids, 4};
 
-    ps_impl_sort_particles(&ctx->arena, morton_codes, &arrs);
+    res = ps_impl_sort_particles(ctx, morton_codes, &arrs);
+    TEST_ASSERT(res == PS_OK, "Sort function aborted early");
 
     // verify morton codes are strictly ascending
     TEST_ASSERT(morton_codes[0] == 10, "Sort failed at idx 0");
@@ -181,15 +228,19 @@ void test_radix_sort(void) {
     TEST_ASSERT_FLOAT_EQ(5.0F, arrs.mass[2], 1e-6F);
     TEST_ASSERT_FLOAT_EQ(9.0F, arrs.mass[3], 1e-6F);
 
-    free(buffer);
+    ps_destroy(ctx);
+    ALIGNED_FREE(buffer);
 }
 
 void test_fmm_upward_pass(void) {
-    void* buffer = malloc(1024ULL * 64);
+    size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    size_t total_mem = ctx_size + (1024ULL * 32);
+
+    void* buffer = malloc(total_mem);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 64, THETA};
+    ps_config_t   cfg = {buffer, total_mem, 2, THETA, 4};
     ps_init(&ctx, &cfg);
 
     float    x[2]    = {2.0F, -1.0F};
@@ -201,16 +252,15 @@ void test_fmm_upward_pass(void) {
 
     ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, id, 2};
 
-    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps_impl_node_init(ctx->root);
-    ctx->root->is_leaf            = 1;
-    ctx->root->particle_cnt       = 2;
-    ctx->root->first_particle_idx = 0;
-    ctx->root->x                  = 0.0F;
-    ctx->root->y                  = 0.0F;
-    ctx->root->z                  = 0.0F;
+    ctx->root                               = ps_impl_alloc_node(ctx);
+    ctx->root->data.leaf.is_leaf            = 1;
+    ctx->root->data.leaf.particle_cnt       = 2;
+    ctx->root->data.leaf.first_particle_idx = 0;
+    ctx->root->x                            = 0.0F;
+    ctx->root->y                            = 0.0F;
+    ctx->root->z                            = 0.0F;
 
-    ps_impl_fmm_upward_pass(ctx->root, &arrs);
+    ps_impl_fmm_upward_pass(ctx, ctx->root, &arrs);
 
     // M0 = sum(mass) = 2.0 + 3.0 = 5.0
     // MX = sum(mass * (x - root_x)) = 2.0*2.0 + 3.0*-1.0 = 1.0
@@ -225,23 +275,23 @@ void test_fmm_upward_pass(void) {
     TEST_ASSERT_FLOAT_EQ(0.0F, root->multipole[2], 1e-4F);  // MY
     TEST_ASSERT_FLOAT_EQ(-1.0F, root->multipole[3], 1e-4F); // MZ
 
+    ps_destroy(ctx);
     free(buffer);
 }
 
 void test_fmm_interaction_pass(void) {
-    void* buffer = malloc(1024ULL * 64);
+    size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    size_t total_mem = ctx_size + (1024ULL * 32);
+
+    void* buffer = malloc(total_mem);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 64, THETA};
+    ps_config_t   cfg = {buffer, total_mem, 2, THETA, 4};
     ps_init(&ctx, &cfg);
 
-    ps_node_t* node_a =
-        (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps_node_t* node_b =
-        (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps_impl_node_init(node_a);
-    ps_impl_node_init(node_b);
+    ps_node_t* node_a = ps_impl_alloc_node(ctx);
+    ps_node_t* node_b = ps_impl_alloc_node(ctx);
 
     node_a->x          = -5.0F;
     node_a->y          = -5.0F;
@@ -255,7 +305,7 @@ void test_fmm_interaction_pass(void) {
 
     node_b->multipole[0] = 1.0F;
 
-    ps_impl_fmm_interaction_pass(node_a, node_b, THETA);
+    ps_impl_fmm_interaction_pass(ctx, node_a, node_b, THETA);
 
     // vector from A to B: dx=10, dy=10, dz=10
     // softened dist_sq = 300.1, dist ~= 17.3234
@@ -263,60 +313,88 @@ void test_fmm_interaction_pass(void) {
     float expected_field = 0.00192354F;
 
     // verify node a local expansion
-    TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[1], 1e-6F); // F_x
-    TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[2], 1e-6F); // F_y
-    TEST_ASSERT_FLOAT_EQ(expected_field, node_a->local[3], 1e-6F); // F_z
+    float* a_local = ps_impl_get_local(ctx, node_a);
+    TEST_ASSERT_FLOAT_EQ(expected_field, a_local[1], 1e-6F); // F_x
+    TEST_ASSERT_FLOAT_EQ(expected_field, a_local[2], 1e-6F); // F_y
+    TEST_ASSERT_FLOAT_EQ(expected_field, a_local[3], 1e-6F); // F_z
 
+    ps_destroy(ctx);
     free(buffer);
 }
 
 void test_fmm_downward_pass(void) {
-    void* buffer = malloc(1024ULL * 64);
+    size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    size_t total_mem = ctx_size + (1024ULL * 16);
+
+    void* buffer = malloc(total_mem);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 64, THETA};
-    ps_init(&ctx, &cfg);
+    ps_config_t   cfg = {buffer, total_mem, 1, THETA, 4};
+    ps_result_t   res = ps_init(&ctx, &cfg);
+    TEST_ASSERT(res == PS_OK, "Init failed");
+
+    uint32_t morton_max      = ps_impl_morton_encode(1023, 1023, 1023);
+    uint32_t morton_codes[1] = {morton_max};
+
+    float    x[1] = {0.0F}, y[1] = {0.0F}, z[1] = {0.0F}, mass[1] = {2.5F};
+    float    fx[1] = {0.0F}, fy[1] = {0.0F}, fz[1] = {0.0F};
+    uint32_t ids[1]         = {7331};
+    ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, ids, 1};
 
     // manually allocate and send the root
-    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps_impl_node_init(ctx->root);
+    ctx->root             = ps_impl_alloc_node(ctx);
+    ctx->root->x          = 0.0F;
+    ctx->root->y          = 0.0F;
+    ctx->root->z          = 0.0F;
     ctx->root->half_width = 10.0F;
 
-    // insert a single particle to create a deep branch
-    uint32_t morton_max = ps_impl_morton_encode(1023, 1023, 1023);
-    ps_impl_tree_insert(&ctx->arena, ctx->root, morton_max, 42);
+    ps_impl_build_tree(ctx, 0, ctx->root, 0, 0, 1, morton_codes);
+    ps_impl_pool_wait(ctx);
 
     // inject a bg field at the root node
-    ctx->root->local[1] = 5.0F;  // F_x
-    ctx->root->local[2] = -3.5F; // F_y
-    ctx->root->local[3] = 42.0F; // F_z
+    float* root_local = ps_impl_get_local(ctx, ctx->root);
+    root_local[1]     = 5.0F;  // F_x
+    root_local[2]     = -3.5F; // F_y
+    root_local[3]     = 42.0F; // F_z
 
-    ps_impl_fmm_downward_pass(ctx->root);
+    ps_impl_fmm_downward_pass(ctx, ctx->root, &arrs);
 
-    // traverse to the bottom leaf node
+    // traverse down until we hit the adaptive leaf node
     ps_node_t* curr = ctx->root;
-    for (int i = 0; i < 10 /* PS_MAX_DEPTH */; ++i) {
-        TEST_ASSERT(curr->children[7] != NULL, "Missing child in path");
-        curr = curr->children[7];
+    while (!curr->data.leaf.is_leaf) {
+        ps_node_t* curr_child =
+            ps_impl_get_node(ctx, curr->data.children_offs[7]);
+        TEST_ASSERT(curr_child != NULL, "Missing child in path");
+        curr = curr_child;
     }
 
-    TEST_ASSERT(curr->is_leaf, "Bottom nod eis not marked as leaf");
+    TEST_ASSERT(curr->data.leaf.is_leaf, "Bottom node is not marked as leaf");
 
-    // verify the field cascaded down properly
-    TEST_ASSERT_FLOAT_EQ(5.0F, curr->local[1], 1e-6F);  // F_x
-    TEST_ASSERT_FLOAT_EQ(-3.5F, curr->local[2], 1e-6F); // F_y
-    TEST_ASSERT_FLOAT_EQ(42.0F, curr->local[3], 1e-6F); // F_z
+    // verify the field cascaded down properly (L2L)
+    float* curr_local = ps_impl_get_local(ctx, curr);
+    TEST_ASSERT_FLOAT_EQ(5.0F, curr_local[1], 1e-6F);  // F_x
+    TEST_ASSERT_FLOAT_EQ(-3.5F, curr_local[2], 1e-6F); // F_y
+    TEST_ASSERT_FLOAT_EQ(42.0F, curr_local[3], 1e-6F); // F_z
 
+    // verify the L2P pass
+    TEST_ASSERT_FLOAT_EQ(12.5F, arrs.fx[0], 1e-6F);  // F_x
+    TEST_ASSERT_FLOAT_EQ(-8.75F, arrs.fy[0], 1e-6F); // F_y
+    TEST_ASSERT_FLOAT_EQ(105.0F, arrs.fz[0], 1e-6F); // F_z
+
+    ps_destroy(ctx);
     free(buffer);
 }
 
 void test_fmm_l2p_pass(void) {
-    void* buffer = malloc(1024ULL * 4);
+    size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    size_t total_mem = ctx_size + (1024ULL * 8);
+
+    void* buffer = malloc(total_mem);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 4, THETA};
+    ps_config_t   cfg = {buffer, total_mem, 1, THETA, 4};
     ps_init(&ctx, &cfg);
 
     float x[1] = {0.0F}, y[1] = {0.0F}, z[1] = {0.0F}, mass[1] = {2.5F};
@@ -324,33 +402,37 @@ void test_fmm_l2p_pass(void) {
     ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, 0, 1};
 
     // manually create a leaf node
-    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps_impl_node_init(ctx->root);
-    ctx->root->is_leaf            = 1;
-    ctx->root->particle_cnt       = 1;
-    ctx->root->first_particle_idx = 0;
+    ctx->root                               = ps_impl_alloc_node(ctx);
+    ctx->root->data.leaf.is_leaf            = 1;
+    ctx->root->data.leaf.particle_cnt       = 1;
+    ctx->root->data.leaf.first_particle_idx = 0;
 
     // bg accel field
-    ctx->root->local[1] = 2.0F;
-    ctx->root->local[2] = -1.0F;
-    ctx->root->local[3] = 4.0F;
+    float* root_local = ps_impl_get_local(ctx, ctx->root);
+    root_local[1]     = 2.0F;
+    root_local[2]     = -1.0F;
+    root_local[3]     = 4.0F;
 
-    ps_impl_fmm_l2p_pass(ctx->root, &arrs);
+    ps_impl_fmm_downward_pass(ctx, ctx->root, &arrs);
 
     // check F = m * a
     TEST_ASSERT_FLOAT_EQ(5.0F, arrs.fx[0], 1e-6F);  // 2.5 * 2.0
     TEST_ASSERT_FLOAT_EQ(-2.5F, arrs.fy[0], 1e-6F); // 2.5 * -1.0
     TEST_ASSERT_FLOAT_EQ(10.0F, arrs.fz[0], 1e-6F); // 2.5 * 4.0
 
+    ps_destroy(ctx);
     free(buffer);
 }
 
 void test_fmm_p2p_pass(void) {
-    void* buffer = malloc(1024ULL * 4);
+    size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    size_t total_mem = ctx_size + (1024ULL * 8);
+
+    void* buffer = malloc(total_mem);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
 
     ps_context_t* ctx = NULL;
-    ps_config_t   cfg = {buffer, 1024ULL * 4, THETA};
+    ps_config_t   cfg = {buffer, total_mem, 2, THETA, 4};
     ps_init(&ctx, &cfg);
 
     // 2 particles offset by 1.0 unit on the x axis
@@ -366,14 +448,13 @@ void test_fmm_p2p_pass(void) {
     const ps_particle_arrs_t arrs = {x, y, z, mass, fx, fy, fz, id, 2};
 
     // manually create a leaf node containing both
-    ctx->root = (ps_node_t*)ps_arena_alloc(&ctx->arena, sizeof(ps_node_t), 16);
-    ps_impl_node_init(ctx->root);
-    ctx->root->is_leaf            = 1;
-    ctx->root->particle_cnt       = 2;
-    ctx->root->first_particle_idx = 0;
-    ctx->root->half_width         = 10.0F; // not well-separated
+    ctx->root                               = ps_impl_alloc_node(ctx);
+    ctx->root->data.leaf.is_leaf            = 1;
+    ctx->root->data.leaf.particle_cnt       = 2;
+    ctx->root->data.leaf.first_particle_idx = 0;
+    ctx->root->half_width                   = 10.0F; // not well-separated
 
-    ps_impl_fmm_p2p_pass(ctx->root, ctx->root, &arrs);
+    ps_impl_fmm_p2p_pass(ctx, ctx->root, ctx->root, &arrs, THETA);
 
     // dist = 1.0
     // dist_sq = 1.0^2 + 0.1 = 1.1
@@ -390,6 +471,7 @@ void test_fmm_p2p_pass(void) {
     TEST_ASSERT_FLOAT_EQ(0.0F, arrs.fy[1], 1e-6F);
     TEST_ASSERT_FLOAT_EQ(0.0F, arrs.fz[1], 1e-6F);
 
+    ps_destroy(ctx);
     free(buffer);
 }
 
