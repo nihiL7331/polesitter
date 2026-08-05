@@ -220,12 +220,17 @@ typedef DWORD(WINAPI* ps_thrd_func_t)(void*);
 #define PS_THRD_RET_VAL  0
 
 #if defined(_WIN64)
+
+// clang-format off
+
 #define ps_atomic_fetch_add_size_t(ptr, val)                                   \
     (size_t)InterlockedExchangeAdd64((volatile LONG64*)(ptr), (LONG64)(val))
 #else
 #define ps_atomic_fetch_add_size_t(ptr, val)                                   \
     (size_t)InterlockedExchangeAdd((volatile LONG*)(ptr), (LONG)(val))
 #endif
+
+// clang-format on
 
 #else // POSIX
 
@@ -1724,7 +1729,11 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg) {
     ctx->arena.cap = max_nodes * sizeof(ps_node_t);
     ctx->arena.off = 0;
 
+    // clang-format off
+
     ctx->local_exp = (float (*)[4])(ctx->arena.mem + ctx->arena.cap);
+
+    // clang-format on
 
 #ifdef PS_MULTITHREADING
 
