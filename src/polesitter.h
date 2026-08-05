@@ -276,10 +276,11 @@ typedef enum {
 typedef struct ps_context ps_context_t;
 
 typedef struct {
-    void*  buff;      // ram provided by host
-    size_t buff_size; // total size in B
-    float  theta;     // MAC threshold. 0.0F defaults to 1.0F
-    size_t thrd_cnt;  // 0 defaults to 1 (single-threaded impl)
+    void*  buff;          // ram provided by host
+    size_t buff_size;     // total size in B
+    size_t max_particles; // maximum capacity for the solver
+    float  theta;         // MAC threshold. 0.0F defaults to 1.0F
+    size_t thrd_cnt;      // 0 defaults to 1 (single-threaded impl)
 } ps_config_t;
 
 typedef struct {
