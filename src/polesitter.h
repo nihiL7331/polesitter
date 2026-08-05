@@ -336,6 +336,7 @@ ps_result_t ps_destroy(ps_context_t* ctx);
 
 #endif // POLESITTER_H
 
+#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -839,7 +840,7 @@ static inline ps_node_t* ps_impl_alloc_node(ps_context_t* ctx) {
 
     memset(node, 0, 64);
 
-    uint32_t idx           = old_off / 64;
+    uint32_t idx           = (uint32_t)(old_off / 64);
     ctx->local_exp[idx][0] = 0.0F;
     ctx->local_exp[idx][1] = 0.0F;
     ctx->local_exp[idx][2] = 0.0F;
@@ -857,7 +858,7 @@ static inline ps_node_t* ps_impl_get_node(ps_context_t* ctx, uint32_t off) {
 }
 
 static inline float* ps_impl_get_local(ps_context_t* ctx, ps_node_t* node) {
-    uint32_t idx = ((uint8_t*)node - ctx->arena.mem) / 64;
+    uint32_t idx = (uint32_t)(((uint8_t*)node - ctx->arena.mem) / 64);
 
     return ctx->local_exp[idx];
 }
@@ -898,13 +899,13 @@ static void ps_impl_build_tree(ps_context_t* ctx, uint32_t thrd_id,
     // max depth reached or only 1 particle left
     if (depth == PS_MAX_DEPTH || end_idx - start_idx <= 1) {
         node->data.leaf.is_leaf            = 1;
-        node->data.leaf.first_particle_idx = start_idx;
-        node->data.leaf.particle_cnt       = end_idx - start_idx;
+        node->data.leaf.first_particle_idx = (uint32_t)start_idx;
+        node->data.leaf.particle_cnt       = (uint32_t)(end_idx - start_idx);
         return;
     }
 
     // shift starts at 27, decreases by 3 each lvl
-    uint8_t shift      = 27 - (depth * 3);
+    uint8_t shift      = (uint8_t)(27 - (depth * 3));
     size_t  curr_start = start_idx;
 
     // subdivide into 8 octants
@@ -935,8 +936,8 @@ static void ps_impl_build_tree(ps_context_t* ctx, uint32_t thrd_id,
                 ps_job_t job;
                 job.type                = PS_JOB_TREE_BUILD;
                 job.data.tree.node      = child;
-                job.data.tree.start_idx = curr_start;
-                job.data.tree.end_idx   = oct_end;
+                job.data.tree.start_idx = (uint32_t)curr_start;
+                job.data.tree.end_idx   = (uint32_t)oct_end;
                 job.data.tree.depth     = depth + 1;
                 ps_impl_pool_submit(ctx, job);
             } else
@@ -1490,7 +1491,7 @@ static void ps_impl_radix_map(ps_context_t* ctx, uint32_t chunk_id,
 
     // count frequencies for this threads chunk
     for (size_t i = start_idx; i < end_idx; ++i) {
-        uint8_t bucket = (m_src[i] >> shift) & 0xFF;
+        uint8_t bucket = (uint8_t)((m_src[i] >> shift) & 0xFF);
         hist[bucket]++;
     }
 }
@@ -1514,7 +1515,7 @@ static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
     }
 
     for (size_t i = start_idx; i < end_idx; ++i) {
-        uint8_t bucket = (rs->m_src[i] >> shift) & 0xFF;
+        uint8_t bucket = (uint8_t)((rs->m_src[i] >> shift) & 0xFF);
         uint8_t c      = buf->cnt[bucket];
 
         buf->m[bucket][c]    = rs->m_src[i];
@@ -1608,8 +1609,8 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx,
         }                                                                      \
         ps_job_t job;                                                          \
         job.type                 = job_type;                                   \
-        job.data.array.start_idx = start;                                      \
-        job.data.array.end_idx   = end;                                        \
+        job.data.array.start_idx = (uint32_t)start;                            \
+        job.data.array.end_idx   = (uint32_t)end;                              \
         job.data.array.chunk_id  = i;                                          \
         ps_impl_pool_submit(ctx, job);                                         \
     }
@@ -1628,7 +1629,7 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx,
 
     // 4 passes of 8b radix sort
     for (int pass = 0; pass < 4; ++pass) {
-        rs->pass = pass;
+        rs->pass = (uint8_t)pass;
 
         // clear histograms on main thread
         for (int bucket = 0; bucket < 256; ++bucket) {
