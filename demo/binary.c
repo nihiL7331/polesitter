@@ -7,11 +7,11 @@
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
-#define PARTICLE_COUNT     5000
+#define PARTICLE_COUNT     10000
 #define BLACKHOLE_MASS     1000.0F
 #define ARENA_SIZE         (1024ULL * 1024ULL * 256ULL)
 #define MAX_EXPECTED_SPEED 20
-#define THETA              3.4641F // sqrt of 12
+#define THETA              2.0F // sqrt of 12
 
 float    vx[PARTICLE_COUNT]           = {0};
 float    vy[PARTICLE_COUNT]           = {0};
@@ -51,7 +51,7 @@ void* init_polesitter(void) {
         return NULL;
     }
 
-    ps_config_t cfg = {buffer, ARENA_SIZE, THETA, 1};
+    ps_config_t cfg = {buffer, ARENA_SIZE, PARTICLE_COUNT, THETA, 1};
     ps_init(&ctx, &cfg);
 
     arrs.x    = px;
@@ -155,7 +155,7 @@ void update(void) {
 
     UpdateCamera(&camera, CAMERA_ORBITAL);
 
-    ps_impl_arena_clear(&ctx->arenas[0]);
+    ps_impl_arena_clear(&ctx->arena);
 
     for (int i = 0; i < PARTICLE_COUNT; ++i) {
         id[i] = i;
@@ -253,7 +253,7 @@ void draw(void) {
                               (unsigned char)(180 - (f * 100)),
                               (unsigned char)(255 - (f * 255)), 255};
         }
-        DrawPoint3D((Vector3){px[i], py[i], pz[i]}, p_color);
+        DrawSphereEx((Vector3){px[i], py[i], pz[i]}, 0.1F, 3, 3, p_color);
     }
 
     EndBlendMode();

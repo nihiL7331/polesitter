@@ -7,10 +7,13 @@
     before you include this file in *one* C or C++ file to create the
    implementation.
 
+   Use #define PS_MULTITHREADING to enable multithreading capabilities.
+
     // i.e. it should look like this:
     #include ...
     #include ...
     #include ...
+    #define PS_MULTITHREADING
     #define POLESITTER_IMPLEMENTATION
     #include "polesitter.h"
 
@@ -32,6 +35,7 @@
     QUICKSTART
 
         ```
+        #define PS_MULTITHREADING
         #define POLESITTER_IMPLEMENTATION
         #include "polesitter.h"
         #include <stdint.h>
@@ -47,8 +51,13 @@
             void* memory_block = malloc(MEMORY_SIZE);
 
             // initialize the context
-
-            ps_config_t cfg = { memory_block, MEMORY_SIZE };
+            ps_config_t cfg = {
+                .buff = memory_block,
+                .buff_size = MEMORY_SIZE,
+                .max_particles = PARTICLE_CNT,
+                .theta = 2.0F,
+                .thrd_cnt = 4
+            };
             ps_context_t* ctx = NULL;
             ps_init(&ctx, &cfg);
 
@@ -153,6 +162,7 @@
             }
 
             // cleanup
+            ps_destroy(ctx);
             free(memory_block);
             return 0;
         }
@@ -167,6 +177,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #if defined(__AVX2__)
 
@@ -296,7 +307,7 @@ typedef struct {
 } ps_particle_arrs_t;
 
 // init pipeline with a pre-allocated buffer.
-ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf);
+ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg);
 
 // compute forces on particles using FMM
 ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
@@ -332,6 +343,7 @@ typedef struct {
 } ps_arena_t;
 
 // octree node
+// exactly 64 bytes (1 cache line)
 typedef struct ps_node {
     // physics, 16B
     float x;
@@ -341,16 +353,17 @@ typedef struct ps_node {
 
     // FMM payload, 32B (monopole + dipole)
     float multipole[4];
-    float local[4];
+    union {
+        uint32_t children_offs[8];
 
-    // structure, 64B
-    struct ps_node* children[8];
-
-    // leaf metadata, 16B
-    uint32_t is_leaf;
-    uint32_t particle_cnt;
-    uint32_t first_particle_idx;
-    uint32_t _pad;
+        struct {
+            // leaf metadata, 16B
+            uint32_t is_leaf;
+            uint32_t particle_cnt;
+            uint32_t first_particle_idx;
+            uint32_t _pad[5];
+        } leaf;
+    } data;
 } ps_node_t;
 
 #ifndef PS_MAX_THRDS
@@ -369,6 +382,7 @@ typedef enum {
     PS_JOB_P2P,
     PS_JOB_RADIX_MAP,
     PS_JOB_RADIX_SCATTER,
+    PS_JOB_TREE_BUILD,
 } ps_job_type_t;
 
 typedef struct {
@@ -425,6 +439,18 @@ typedef struct {
 
 #endif // PS_MULTITHREADING
 
+#define PS_RADIX_BUF_SIZE 16
+
+typedef struct {
+    uint32_t m[256][PS_RADIX_BUF_SIZE];
+    uint32_t id[256][PS_RADIX_BUF_SIZE];
+    float    x[256][PS_RADIX_BUF_SIZE];
+    float    y[256][PS_RADIX_BUF_SIZE];
+    float    z[256][PS_RADIX_BUF_SIZE];
+    float    mass[256][PS_RADIX_BUF_SIZE];
+    uint8_t  cnt[256];
+} ps_scatter_buf_t;
+
 // holds the shared state for the radix pipeline
 typedef struct {
     uint32_t* m_src;
@@ -440,7 +466,8 @@ typedef struct {
     float*    mass_src;
     float*    mass_dst;
 
-    uint8_t pass; // 0-3
+    ps_scatter_buf_t* bufs;
+    uint8_t           pass; // 0-3
 
     // each thrd gets its own 256-bin histogram and off array
     uint32_t hists[PS_MAX_THRDS + 1][256];
@@ -448,9 +475,10 @@ typedef struct {
 } ps_radix_state_t;
 
 struct ps_context {
-    ps_node_t*       root;
-    float            theta;
-    ps_arena_t       arenas[PS_MAX_THRDS + 1];
+    ps_node_t* root;
+    float      theta;
+    ps_arena_t arena;
+    float (*local_exp)[4];
     ps_radix_state_t radix_state;
 
 #ifdef PS_MULTITHREADING
@@ -551,11 +579,11 @@ static inline void ps_thrd_join(ps_thrd_t t) {
 #endif // PS_MULTITHREADING
 
 // forward declare passes for router
-static void ps_impl_fmm_upward_pass(ps_node_t*                node,
+static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
                                     const ps_particle_arrs_t* arrs);
-static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src,
-                                         float theta);
-static void ps_impl_fmm_downward_pass(ps_node_t*                node,
+static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
+                                         ps_node_t* src, float theta);
+static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
                                       const ps_particle_arrs_t* arrs);
 static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
                                  ps_node_t* src, const ps_particle_arrs_t* arrs,
@@ -564,18 +592,22 @@ static void ps_impl_radix_map(ps_context_t* ctx, uint32_t chunk_id,
                               size_t start_idx, size_t end_idx);
 static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
                                   size_t start_idx, size_t end_idx);
+static void ps_impl_build_tree(ps_context_t* ctx, uint32_t thrd_id,
+                               ps_node_t* node, uint32_t depth,
+                               size_t start_idx, size_t end_idx,
+                               const uint32_t* morton_codes);
 
 static inline void ps_impl_exec_job(ps_context_t* ctx, ps_job_t* job) {
     if (job->type == PS_JOB_UPWARD) {
-        ps_impl_fmm_upward_pass(job->data.fmm.src, job->data.fmm.arrs);
+        ps_impl_fmm_upward_pass(ctx, job->data.fmm.src, job->data.fmm.arrs);
     } else if (job->type == PS_JOB_INTERACTION) {
-        ps_impl_fmm_interaction_pass(job->data.fmm.target, job->data.fmm.src,
-                                     ctx->theta);
+        ps_impl_fmm_interaction_pass(ctx, job->data.fmm.target,
+                                     job->data.fmm.src, ctx->theta);
     } else if (job->type == PS_JOB_DOWNWARD) {
-        ps_impl_fmm_downward_pass(job->data.fmm.src, job->data.fmm.arrs);
+        ps_impl_fmm_downward_pass(ctx, job->data.fmm.src, job->data.fmm.arrs);
     } else if (job->type == PS_JOB_P2P) {
-        ps_impl_fmm_p2p_pass(job->data.fmm.target, job->data.fmm.src,
-                             job->data.fmm.arrs);
+        ps_impl_fmm_p2p_pass(ctx, job->data.fmm.target, job->data.fmm.src,
+                             job->data.fmm.arrs, ctx->theta);
     } else if (job->type == PS_JOB_RADIX_MAP) {
         ps_impl_radix_map(ctx, job->data.array.chunk_id,
                           job->data.array.start_idx, job->data.array.end_idx);
@@ -583,6 +615,10 @@ static inline void ps_impl_exec_job(ps_context_t* ctx, ps_job_t* job) {
         ps_impl_radix_scatter(ctx, job->data.array.chunk_id,
                               job->data.array.start_idx,
                               job->data.array.end_idx);
+    } else if (job->type == PS_JOB_TREE_BUILD) {
+        ps_impl_build_tree(ctx, job->thrd_id, job->data.tree.node,
+                           job->data.tree.depth, job->data.tree.start_idx,
+                           job->data.tree.end_idx, ctx->radix_state.m_src);
     }
 }
 
@@ -686,12 +722,14 @@ static int ps_impl_pool_init(ps_context_t* ctx, uint32_t num_thrds) {
     pool->cnt           = 0;
     pool->active_jobs   = 0;
     pool->shutdown_flag = 0;
+    pool->thrd_cnt      = num_thrds;
 
-    pool->thrd_cnt = num_thrds;
+    if (num_thrds == 0) {
+        return PS_OK;
+    }
+
     if (pool->thrd_cnt > PS_MAX_THRDS) {
         pool->thrd_cnt = PS_MAX_THRDS;
-    } else if (pool->thrd_cnt < 1) {
-        pool->thrd_cnt = 1;
     }
 
     pool->lock = 0;
@@ -711,21 +749,7 @@ static int ps_impl_pool_init(ps_context_t* ctx, uint32_t num_thrds) {
     return PS_OK;
 }
 
-// static void ps_impl_pool_destroy(ps_thrd_pool_t* pool) {
-//     ps_mtx_lock(&pool->lock);
-//     pool->shutdown_flag = 1;
-//     ps_cond_bcast(&pool->work_cond);
-//     ps_mtx_unlock(&pool->lock);
-//
-//     for (uint32_t i = 0; i < pool->thrd_cnt; ++i) {
-//         ps_thrd_join(pool->thrds[i]);
-//     }
-//
-//     ps_mtx_destroy(&pool->lock);
-//     ps_cond_destroy(&pool->work_cond);
-//     ps_cond_destroy(&pool->space_cond);
-//     ps_cond_destroy(&pool->done_cond);
-// }
+#endif // PS_MULTITHREADING
 
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
 static uint32_t ps_impl_expand_bits(uint32_t v) {
@@ -756,64 +780,75 @@ static inline size_t ps_impl_align_forward(size_t v, size_t align) {
     return (v + (align - 1)) & ~(align - 1);
 }
 
-// init arena with pre-allocated/externally provided buffer
-static void ps_impl_arena_init(ps_arena_t* arena, void* buffer, size_t cap) {
-    arena->mem = (uint8_t*)buffer;
-    arena->cap = cap;
-    arena->off = 0;
-}
-
 // alloc raw bytes
-static void* ps_impl_arena_alloc(ps_context_t* ctx, uint32_t thrd_id,
-                                 size_t size) {
-    ps_arena_t* local = &ctx->arenas[thrd_id];
+static void* ps_impl_arena_alloc(ps_context_t* ctx, size_t size) {
+    if (!ctx) {
+        return NULL;
+    }
 
-    // 16B align for SIMD
-    size = (size + 15) & ~15;
+    size = (size + 63) & ~63;
+
+#ifdef PS_MULTITHREADING
+    size_t old_off = ps_atomic_fetch_add_size_t(&ctx->arena.off, size);
+#else
+    size_t old_off = ctx->arena.off;
+    ctx->arena.off += size;
+#endif
 
     // check if we have enough space in the arena
-    if (local->off + size > local->cap) {
+    if (old_off + size > ctx->arena.cap) {
         return NULL;
     }
 
     // advance bump pointer and return aligned address
-    void* ptr = local->mem + local->off;
-    local->off += size;
-
-    return ptr;
-}
-//
-// zero out a newly allocated node
-static void ps_impl_node_init(ps_node_t* node) {
-    node->x          = 0.0F;
-    node->y          = 0.0F;
-    node->z          = 0.0F;
-    node->half_width = 0.0F;
-
-    for (int i = 0; i < 4; ++i) {
-        node->multipole[i] = 0.0F;
-        node->local[i]     = 0.0F;
-    }
-
-    for (int i = 0; i < 8; ++i) {
-        node->children[i] = NULL;
-    }
-
-    node->is_leaf            = 0;
-    node->particle_cnt       = 0;
-    node->first_particle_idx = 0;
+    return ctx->arena.mem + old_off;
 }
 
 // helper to grab a new node
-static inline ps_node_t* ps_impl_alloc_node(ps_context_t* ctx,
-                                            uint32_t      thrd_id) {
-    ps_node_t* node =
-        (ps_node_t*)ps_impl_arena_alloc(ctx, thrd_id, sizeof(ps_node_t));
-    if (node) {
-        ps_impl_node_init(node);
+static inline ps_node_t* ps_impl_alloc_node(ps_context_t* ctx) {
+    if (!ctx) {
+        return NULL;
     }
 
+    size_t size = 64;
+
+#ifdef PS_MULTITHREADING
+    size_t old_off = ps_atomic_fetch_add_size_t(&ctx->arena.off, size);
+#else
+    size_t old_off = ctx->arena.off;
+    ctx->arena.off += size;
+#endif
+
+    // check if we have enough space in the arena
+    if (old_off + size > ctx->arena.cap) {
+        return NULL;
+    }
+
+    ps_node_t* node = (ps_node_t*)(ctx->arena.mem + old_off);
+
+    memset(node, 0, 64);
+
+    uint32_t idx           = old_off / 64;
+    ctx->local_exp[idx][0] = 0.0F;
+    ctx->local_exp[idx][1] = 0.0F;
+    ctx->local_exp[idx][2] = 0.0F;
+    ctx->local_exp[idx][3] = 0.0F;
+
     return node;
+}
+
+static inline ps_node_t* ps_impl_get_node(ps_context_t* ctx, uint32_t off) {
+    if (off == 0) {
+        return NULL;
+    }
+
+    return (ps_node_t*)(ctx->arena.mem + off);
+}
+
+static inline float* ps_impl_get_local(ps_context_t* ctx, ps_node_t* node) {
+    uint32_t idx = ((uint8_t*)node - ctx->arena.mem) / 64;
+
+    return ctx->local_exp[idx];
 }
 
 // clear for next frame
@@ -824,77 +859,107 @@ static void ps_impl_arena_clear(ps_arena_t* arena) {
 #define PS_MAX_DEPTH                                                           \
     10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
 
-// walk the morton code and build the tree branches
-static ps_result_t ps_impl_tree_insert(ps_context_t* ctx, uint32_t thrd_id,
-                                       ps_node_t* root, uint32_t morton_code,
-                                       uint32_t particle_idx) {
-    if (!root) {
-        return PS_EINVAL;
+// bin search to find the idx where target oct begins
+static inline size_t ps_impl_find_split(const uint32_t* codes, size_t start,
+                                        size_t end, int shift,
+                                        uint32_t target_oct) {
+    size_t left  = start;
+    size_t right = end;
+    while (left < right) {
+        size_t   mid = left + ((right - left) / 2);
+        uint32_t oct = (codes[mid] >> shift) & 0x7;
+
+        if (oct < target_oct) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
     }
 
-    ps_node_t* curr = root;
+    return left;
+}
 
-    float curr_x  = root->x;
-    float curr_y  = root->y;
-    float curr_z  = root->z;
-    float curr_hw = root->half_width;
+// walk the morton code and build the tree branches
+static void ps_impl_build_tree(ps_context_t* ctx, uint32_t thrd_id,
+                               ps_node_t* node, uint32_t depth,
+                               size_t start_idx, size_t end_idx,
+                               const uint32_t* morton_codes) {
+    // max depth reached or only 1 particle left
+    if (depth == PS_MAX_DEPTH || end_idx - start_idx <= 1) {
+        node->data.leaf.is_leaf            = 1;
+        node->data.leaf.first_particle_idx = start_idx;
+        node->data.leaf.particle_cnt       = end_idx - start_idx;
+        return;
+    }
 
-    for (int depth = 0; depth < PS_MAX_DEPTH; ++depth) {
-        // shift starts at 27, decreases by 3 each lvl
-        int      shift  = 27 - (depth * 3);
-        uint32_t octant = (morton_code >> shift) & 0x7; // 3 bits for octant
+    // shift starts at 27, decreases by 3 each lvl
+    uint8_t shift      = 27 - (depth * 3);
+    size_t  curr_start = start_idx;
 
-        curr_hw *= 0.5F;
+    // subdivide into 8 octants
+    for (uint32_t oct = 0; oct < 8; ++oct) {
+        // find where this octnat ends in the sorted arr
+        size_t oct_end = ps_impl_find_split(morton_codes, curr_start, end_idx,
+                                            shift, oct + 1);
 
-        curr_x += (octant & 0x1 /* bit 0 */) ? curr_hw : -curr_hw;
-        curr_y += (octant & 0x2 /* bit 1 */) ? curr_hw : -curr_hw;
-        curr_z += (octant & 0x4 /* bit 2 */) ? curr_hw : -curr_hw;
-
-        if (!curr->children[octant]) {
-            ps_node_t* new_node = ps_impl_alloc_node(ctx, thrd_id);
-            if (!new_node) {
-                return PS_EOOM;
+        // if this octant has particles build a branch
+        if (oct_end > curr_start) {
+            ps_node_t* child = ps_impl_alloc_node(ctx);
+            if (!child) {
+                return;
             }
 
-            new_node->x          = curr_x;
-            new_node->y          = curr_y;
-            new_node->z          = curr_z;
-            new_node->half_width = curr_hw;
+            float hw          = node->half_width * 0.5F;
+            child->x          = node->x + ((oct & 1) ? hw : -hw);
+            child->y          = node->y + ((oct & 2) ? hw : -hw);
+            child->z          = node->z + ((oct & 4) ? hw : -hw);
+            child->half_width = hw;
 
-            curr->children[octant] = new_node;
+            node->data.children_offs[oct] =
+                (uint32_t)((uint8_t*)child - ctx->arena.mem);
+
+// spawn job for top layers
+#ifdef PS_MULTITHREADING
+            if (depth == 0) {
+                ps_job_t job;
+                job.type                = PS_JOB_TREE_BUILD;
+                job.data.tree.node      = child;
+                job.data.tree.start_idx = curr_start;
+                job.data.tree.end_idx   = oct_end;
+                job.data.tree.depth     = depth + 1;
+                ps_impl_pool_submit(ctx, job);
+            } else
+#endif // PS_MULTITHREADING
+            {
+                ps_impl_build_tree(ctx, thrd_id, child, depth + 1, curr_start,
+                                   oct_end, morton_codes);
+            }
         }
 
-        curr = curr->children[octant];
+        curr_start = oct_end;
+        if (curr_start == end_idx) {
+            break; // all particles handled
+        }
     }
-
-    curr->is_leaf = 1;
-
-    if (curr->particle_cnt == 0) {
-        curr->first_particle_idx = particle_idx;
-    }
-
-    curr->particle_cnt++;
-
-    return PS_OK;
 }
 
 // pass 1
 // p2m (leaves) and m2m (parents) in post-order traversal
-static void ps_impl_fmm_upward_pass(ps_node_t*                node,
+static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
                                     const ps_particle_arrs_t* arrs) {
     if (!node) {
         return;
     }
 
     // p2m
-    if (node->is_leaf) {
+    if (node->data.leaf.is_leaf & 1) {
         float m0 = 0.0F; // monopole (total mass)
         float mx = 0.0F; // dipole x (mass moment)
         float my = 0.0F; // dipole y
         float mz = 0.0F; // dipole z
 
-        for (uint32_t i = 0; i < node->particle_cnt; ++i) {
-            uint32_t idx  = node->first_particle_idx + i;
+        for (uint32_t i = 0; i < node->data.leaf.particle_cnt; ++i) {
+            uint32_t idx  = node->data.leaf.first_particle_idx + i;
             float    mass = arrs->mass[idx];
 
             // dist from particle pos to center of this voxel
@@ -923,29 +988,31 @@ static void ps_impl_fmm_upward_pass(ps_node_t*                node,
     float p_mz = 0.0F;
 
     for (int i = 0; i < 8; ++i) {
-        ps_node_t* child = node->children[i];
-        if (child) {
-            // calc the children first
-            ps_impl_fmm_upward_pass(child, arrs);
-
-            // dist vector from the child's center
-            // up to the parent's center
-            float dx = child->x - node->x;
-            float dy = child->y - node->y;
-            float dz = child->z - node->z;
-
-            float c_m0 = child->multipole[0];
-            float c_mx = child->multipole[1];
-            float c_my = child->multipole[2];
-            float c_mz = child->multipole[3];
-
-            // shift the childs expansion to the parents center and accumulate
-            // dipole requires the monopole * dist
-            p_m0 += c_m0;
-            p_mx += c_mx + (c_m0 * dx);
-            p_my += c_my + (c_m0 * dy);
-            p_mz += c_mz + (c_m0 * dz);
+        ps_node_t* child = ps_impl_get_node(ctx, node->data.children_offs[i]);
+        if (!child) {
+            continue;
         }
+
+        // calc the children first
+        ps_impl_fmm_upward_pass(ctx, child, arrs);
+
+        // dist vector from the child's center
+        // up to the parent's center
+        float dx = child->x - node->x;
+        float dy = child->y - node->y;
+        float dz = child->z - node->z;
+
+        float c_m0 = child->multipole[0];
+        float c_mx = child->multipole[1];
+        float c_my = child->multipole[2];
+        float c_mz = child->multipole[3];
+
+        // shift the childs expansion to the parents center and accumulate
+        // dipole requires the monopole * dist
+        p_m0 += c_m0;
+        p_mx += c_mx + (c_m0 * dx);
+        p_my += c_my + (c_m0 * dy);
+        p_mz += c_mz + (c_m0 * dz);
     }
 
     // store aggregated expansion in parent
@@ -957,8 +1024,8 @@ static void ps_impl_fmm_upward_pass(ps_node_t*                node,
 
 // pass 2
 // m2l dual-tree traversal to find well-separated nodes and translate expansions
-static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src,
-                                         float theta) {
+static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
+                                         ps_node_t* src, float theta) {
     if (!target || !src) {
         return;
     }
@@ -996,43 +1063,60 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src,
         float force_dip_z = (mz * inv_r3) - (dz * dipole_coeff);
 
         // accumulate into target's local expansion
-        target->local[1] += force_m0_x + force_dip_x;
-        target->local[2] += force_m0_y + force_dip_y;
-        target->local[3] += force_m0_z + force_dip_z;
+        float* t_local = ps_impl_get_local(ctx, target);
+        t_local[1] += force_m0_x + force_dip_x;
+        t_local[2] += force_m0_y + force_dip_y;
+        t_local[3] += force_m0_z + force_dip_z;
 
         return;
     }
 
     // not well-separated
-    if (target->is_leaf && src->is_leaf) {
+    if ((target->data.leaf.is_leaf & 1) && (src->data.leaf.is_leaf & 1)) {
         // both are leaves, near-field p2p pass will handle exact dists
         return;
     }
 
-    if (target->is_leaf) {
+    if (target->data.leaf.is_leaf & 1) {
         // target is as small as possible, open the src
         for (int i = 0; i < 8; ++i) {
-            ps_impl_fmm_interaction_pass(target, src->children[i], theta);
+            ps_node_t* src_child =
+                ps_impl_get_node(ctx, src->data.children_offs[i]);
+            if (!src_child) {
+                continue;
+            }
+
+            ps_impl_fmm_interaction_pass(ctx, target, src_child, theta);
         }
-    } else if (src->is_leaf) {
+    } else if (src->data.leaf.is_leaf & 1) {
         // src is as small as possible, open the target
         for (int i = 0; i < 8; ++i) {
-            ps_impl_fmm_interaction_pass(target->children[i], src, theta);
+            ps_node_t* target_child =
+                ps_impl_get_node(ctx, target->data.children_offs[i]);
+            if (!target_child) {
+                continue;
+            }
+
+            ps_impl_fmm_interaction_pass(ctx, target_child, src, theta);
         }
     } else {
         // subdivide both and pair all 64 permutations
         for (int i = 0; i < 8; ++i) {
-            if (!target->children[i]) {
+            ps_node_t* target_child =
+                ps_impl_get_node(ctx, target->data.children_offs[i]);
+            if (!target_child) {
                 continue;
             }
 
             for (int j = 0; j < 8; ++j) {
-                if (!src->children[j]) {
+                ps_node_t* src_child =
+                    ps_impl_get_node(ctx, src->data.children_offs[j]);
+                if (!src_child) {
                     continue;
                 }
 
-                ps_impl_fmm_interaction_pass(target->children[i],
-                                             src->children[j], theta);
+                ps_impl_fmm_interaction_pass(ctx, target_child, src_child,
+                                             theta);
             }
         }
     }
@@ -1042,16 +1126,17 @@ static void ps_impl_fmm_interaction_pass(ps_node_t* target, ps_node_t* src,
 // l2l, pushes the accumulated background field from parents down to their
 // children
 // l2p, applies the accumulated bg field to the particles inside the leaf
-static void ps_impl_fmm_downward_pass(ps_node_t*                node,
+static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
                                       const ps_particle_arrs_t* arrs) {
     if (!node) {
         return;
     }
 
-    if (node->is_leaf) {
-        float field_x = node->local[1];
-        float field_y = node->local[2];
-        float field_z = node->local[3];
+    if (node->data.leaf.is_leaf & 1) {
+        float* t_local = ps_impl_get_local(ctx, node);
+        float  field_x = t_local[1];
+        float  field_y = t_local[2];
+        float  field_z = t_local[3];
 
         uint32_t i = 0;
 
@@ -1062,8 +1147,8 @@ static void ps_impl_fmm_downward_pass(ps_node_t*                node,
         __m256 f_z_vec = _mm256_set1_ps(field_z);
 
         // process in chunks of 8
-        for (; i + 7 < node->particle_cnt; i += 8) {
-            uint32_t idx = node->first_particle_idx + i;
+        for (; i + 7 < node->data.leaf.particle_cnt; i += 8) {
+            uint32_t idx = node->data.leaf.first_particle_idx + i;
 
             // load 8 masses
             __m256 m_vec = _mm256_loadu_ps(&arrs->mass[idx]);
@@ -1090,8 +1175,8 @@ static void ps_impl_fmm_downward_pass(ps_node_t*                node,
         float32x4_t f_z_vec = vdupq_n_f32(field_z);
 
         // process in chunks of 4
-        for (; i + 3 < node->particle_cnt; i += 4) {
-            uint32_t idx = node->first_particle_idx + i;
+        for (; i + 3 < node->data.leaf.particle_cnt; i += 4) {
+            uint32_t idx = node->data.leaf.first_particle_idx + i;
 
             // load 4 masses
             float32x4_t m_vec = vld1q_f32(&arrs->mass[idx]);
@@ -1114,8 +1199,8 @@ static void ps_impl_fmm_downward_pass(ps_node_t*                node,
 #endif
 
         // fallback for the remainder
-        for (; i < node->particle_cnt; ++i) {
-            uint32_t idx  = node->first_particle_idx + i;
+        for (; i < node->data.leaf.particle_cnt; ++i) {
+            uint32_t idx  = node->data.leaf.first_particle_idx + i;
             float    mass = arrs->mass[idx];
 
             // F = m * a
@@ -1128,16 +1213,20 @@ static void ps_impl_fmm_downward_pass(ps_node_t*                node,
     }
 
     for (int i = 0; i < 8; ++i) {
-        ps_node_t* child = node->children[i];
-        if (child) {
-            // 1-st order local expansion,
-            // shifting it is adding the parent's field to the child's field
-            child->local[1] += node->local[1];
-            child->local[2] += node->local[2];
-            child->local[3] += node->local[3];
-
-            ps_impl_fmm_downward_pass(child, arrs);
+        ps_node_t* child = ps_impl_get_node(ctx, node->data.children_offs[i]);
+        if (!child) {
+            continue;
         }
+
+        // 1-st order local expansion,
+        // shifting it is adding the parent's field to the child's field
+        float*       child_local = ps_impl_get_local(ctx, child);
+        const float* node_local  = ps_impl_get_local(ctx, node);
+        child_local[1] += node_local[1];
+        child_local[2] += node_local[2];
+        child_local[3] += node_local[3];
+
+        ps_impl_fmm_downward_pass(ctx, child, arrs);
     }
 }
 
@@ -1164,9 +1253,9 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
 
     // if both are leaves and too close
     // do direct N-body force
-    if (target->is_leaf && src->is_leaf) {
-        for (uint32_t i = 0; i < target->particle_cnt; ++i) {
-            uint32_t t_idx  = target->first_particle_idx + i;
+    if ((target->data.leaf.is_leaf & 1) && (src->data.leaf.is_leaf & 1)) {
+        for (uint32_t i = 0; i < target->data.leaf.particle_cnt; ++i) {
+            uint32_t t_idx  = target->data.leaf.first_particle_idx + i;
             float    t_x    = arrs->x[t_idx];
             float    t_y    = arrs->y[t_idx];
             float    t_z    = arrs->z[t_idx];
@@ -1195,8 +1284,8 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             __m256 f_z_vec = _mm256_setzero_ps();
 
             // process in chunks of 8
-            for (; j + 7 < src->particle_cnt; j += 8) {
-                uint32_t s_idx = src->first_particle_idx + j;
+            for (; j + 7 < src->data.leaf.particle_cnt; j += 8) {
+                uint32_t s_idx = src->data.leaf.first_particle_idx + j;
 
                 // load 8 source coordinates and masses
                 __m256 s_x_vec = _mm256_loadu_ps(&sx[s_idx]);
@@ -1256,8 +1345,8 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             float32x4_t f_z_vec = vdupq_n_f32(0.0F);
 
             // process in chunks of 4
-            for (; j + 3 < src->particle_cnt; j += 4) {
-                uint32_t s_idx = src->first_particle_idx + j;
+            for (; j + 3 < src->data.leaf.particle_cnt; j += 4) {
+                uint32_t s_idx = src->data.leaf.first_particle_idx + j;
 
                 // load 4 source coordinates and masses
                 float32x4_t s_x_vec = vld1q_f32(&sx[s_idx]);
@@ -1309,8 +1398,8 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
 #endif
             // fallback for the remainder (previous operations left n in mod 8
             // particles)
-            for (; j < src->particle_cnt; ++j) {
-                uint32_t s_idx = src->first_particle_idx + j;
+            for (; j < src->data.leaf.particle_cnt; ++j) {
+                uint32_t s_idx = src->data.leaf.first_particle_idx + j;
 
                 float p_dx = sx[s_idx] - t_x;
                 float p_dy = sy[s_idx] - t_y;
@@ -1340,27 +1429,42 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
     }
 
     // otherwise subdivide and recurse (like in m2l)
-    if (target->is_leaf) {
+    if (target->data.leaf.is_leaf & 1) {
         for (int i = 0; i < 8; ++i) {
-            ps_impl_fmm_p2p_pass(target, src->children[i], arrs);
+            ps_node_t* src_child =
+                ps_impl_get_node(ctx, src->data.children_offs[i]);
+            if (!src_child) {
+                continue;
+            }
+
+            ps_impl_fmm_p2p_pass(ctx, target, src_child, arrs, theta);
         }
-    } else if (src->is_leaf) {
+    } else if (src->data.leaf.is_leaf & 1) {
         for (int i = 0; i < 8; ++i) {
-            ps_impl_fmm_p2p_pass(target->children[i], src, arrs);
+            ps_node_t* target_child =
+                ps_impl_get_node(ctx, target->data.children_offs[i]);
+            if (!target_child) {
+                continue;
+            }
+
+            ps_impl_fmm_p2p_pass(ctx, target_child, src, arrs, theta);
         }
     } else {
         for (int i = 0; i < 8; ++i) {
-            if (!target->children[i]) {
+            ps_node_t* target_child =
+                ps_impl_get_node(ctx, target->data.children_offs[i]);
+            if (!target_child) {
                 continue;
             }
 
             for (int j = 0; j < 8; ++j) {
-                if (!src->children[j]) {
+                ps_node_t* src_child =
+                    ps_impl_get_node(ctx, src->data.children_offs[j]);
+                if (!src_child) {
                     continue;
                 }
 
-                ps_impl_fmm_p2p_pass(target->children[i], src->children[j],
-                                     arrs);
+                ps_impl_fmm_p2p_pass(ctx, target_child, src_child, arrs, theta);
             }
         }
     }
@@ -1373,11 +1477,6 @@ static void ps_impl_radix_map(ps_context_t* ctx, uint32_t chunk_id,
     const uint32_t* m_src = ctx->radix_state.m_src;
     uint32_t*       hist  = ctx->radix_state.hists[chunk_id];
 
-    // clear local histogram
-    for (int i = 0; i < 256; ++i) {
-        hist[i] = 0;
-    }
-
     // count frequencies for this threads chunk
     for (size_t i = start_idx; i < end_idx; ++i) {
         uint8_t bucket = (m_src[i] >> shift) & 0xFF;
@@ -1389,6 +1488,12 @@ static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
                                   size_t start_idx, size_t end_idx) {
     int               shift = ctx->radix_state.pass * 8;
     ps_radix_state_t* rs    = &ctx->radix_state;
+    ps_scatter_buf_t* buf   = &rs->bufs[chunk_id];
+
+    // reset buffer counts for this pass
+    for (int i = 0; i < 256; ++i) {
+        buf->cnt[i] = 0;
+    }
 
     // make a local copy of this threads start offsets
     // so we can increment them safely in regs
@@ -1397,17 +1502,56 @@ static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
         local_offs[i] = rs->offs[chunk_id][i];
     }
 
-    // scatter the data to dest slots
     for (size_t i = start_idx; i < end_idx; ++i) {
-        uint8_t  bucket  = (rs->m_src[i] >> shift) & 0xFF;
-        uint32_t dst_idx = local_offs[bucket]++;
+        uint8_t bucket = (rs->m_src[i] >> shift) & 0xFF;
+        uint8_t c      = buf->cnt[bucket];
 
-        rs->m_dst[dst_idx]    = rs->m_src[i];
-        rs->id_dst[dst_idx]   = rs->id_src[i];
-        rs->x_dst[dst_idx]    = rs->x_src[i];
-        rs->y_dst[dst_idx]    = rs->y_src[i];
-        rs->z_dst[dst_idx]    = rs->z_src[i];
-        rs->mass_dst[dst_idx] = rs->mass_src[i];
+        buf->m[bucket][c]    = rs->m_src[i];
+        buf->id[bucket][c]   = rs->id_src[i];
+        buf->x[bucket][c]    = rs->x_src[i];
+        buf->y[bucket][c]    = rs->y_src[i];
+        buf->z[bucket][c]    = rs->z_src[i];
+        buf->mass[bucket][c] = rs->mass_src[i];
+
+        c++;
+
+        // if buffer is full, flush to main memory in one
+        if (c == PS_RADIX_BUF_SIZE) {
+            uint32_t dst_idx = local_offs[bucket];
+
+            for (int j = 0; j < PS_RADIX_BUF_SIZE; ++j) {
+                rs->m_dst[dst_idx + j]    = buf->m[bucket][j];
+                rs->id_dst[dst_idx + j]   = buf->id[bucket][j];
+                rs->x_dst[dst_idx + j]    = buf->x[bucket][j];
+                rs->y_dst[dst_idx + j]    = buf->y[bucket][j];
+                rs->z_dst[dst_idx + j]    = buf->z[bucket][j];
+                rs->mass_dst[dst_idx + j] = buf->mass[bucket][j];
+            }
+
+            local_offs[bucket] += PS_RADIX_BUF_SIZE;
+            buf->cnt[bucket] = 0;
+        } else {
+            buf->cnt[bucket] = c;
+        }
+    }
+
+    for (int bucket = 0; bucket < 256; ++bucket) {
+        uint8_t rem = buf->cnt[bucket];
+
+        if (rem > 0) {
+            uint32_t dst_idx = local_offs[bucket];
+
+            for (int j = 0; j < rem; ++j) {
+                rs->m_dst[dst_idx + j]    = buf->m[bucket][j];
+                rs->id_dst[dst_idx + j]   = buf->id[bucket][j];
+                rs->x_dst[dst_idx + j]    = buf->x[bucket][j];
+                rs->y_dst[dst_idx + j]    = buf->y[bucket][j];
+                rs->z_dst[dst_idx + j]    = buf->z[bucket][j];
+                rs->mass_dst[dst_idx + j] = buf->mass[bucket][j];
+            }
+
+            local_offs[bucket] += rem;
+        }
     }
 }
 
@@ -1418,54 +1562,25 @@ static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
         (b)      = tmp;                                                        \
     } while (0)
 
-static ps_result_t ps_impl_sort_particles(ps_context_t* ctx, uint32_t thrd_id,
-                                          uint32_t* morton_codes,
+static ps_result_t ps_impl_sort_particles(ps_context_t* ctx,
+                                          uint32_t*     morton_codes,
                                           const ps_particle_arrs_t* arrs) {
     size_t cnt = arrs->cnt;
     if (cnt == 0) {
         return PS_OK;
     }
 
-    ps_arena_t* arena = &ctx->arenas[thrd_id];
-
-    // used later to reclaim temp memory
-    size_t tmp_off = arena->off;
-
-    // borrow temp SoA buffers from the arena
-    uint32_t* m_tmp =
-        (uint32_t*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(uint32_t));
-    uint32_t* id_tmp =
-        (uint32_t*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(uint32_t));
-    float* x_tmp =
-        (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
-    float* y_tmp =
-        (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
-    float* z_tmp =
-        (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
-    float* mass_tmp =
-        (float*)ps_impl_arena_alloc(ctx, thrd_id, cnt * sizeof(float));
-
-    if (!m_tmp || !id_tmp || !x_tmp || !y_tmp || !z_tmp || !mass_tmp) {
-        return PS_EOOM;
-    }
-
     ps_radix_state_t* rs = &ctx->radix_state;
     rs->m_src            = morton_codes;
-    rs->m_dst            = m_tmp;
     rs->id_src           = arrs->id;
-    rs->id_dst           = id_tmp;
     rs->x_src            = arrs->x;
-    rs->x_dst            = x_tmp;
     rs->y_src            = arrs->y;
-    rs->y_dst            = y_tmp;
     rs->z_src            = arrs->z;
-    rs->z_dst            = z_tmp;
     rs->mass_src         = arrs->mass;
-    rs->mass_dst         = mass_tmp;
 
     // how many chunks split into
 #ifdef PS_MULTITHREADING
-    uint32_t num_chunks = ctx->pool.thrd_cnt;
+    uint32_t num_chunks = (ctx->pool.thrd_cnt > 0) ? ctx->pool.thrd_cnt : 1;
 #else
     uint32_t num_chunks = 1;
 #endif
@@ -1491,9 +1606,25 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx, uint32_t thrd_id,
     // ceiling div so last chunk takes remainder
     size_t chunk_size = (cnt + num_chunks - 1) / num_chunks;
 
+    size_t pre_sort_off = ctx->arena.off;
+    rs->bufs            = (ps_scatter_buf_t*)ps_impl_arena_alloc(
+        ctx, num_chunks * sizeof(ps_scatter_buf_t));
+
+    if (!rs->bufs) {
+        ctx->arena.off = pre_sort_off;
+        return PS_EOOM;
+    }
+
     // 4 passes of 8b radix sort
     for (int pass = 0; pass < 4; ++pass) {
         rs->pass = pass;
+
+        // clear histograms on main thread
+        for (int bucket = 0; bucket < 256; ++bucket) {
+            for (uint32_t chunk = 0; chunk < num_chunks; ++chunk) {
+                rs->hists[chunk][bucket] = 0;
+            }
+        }
 
         // local histograms/map
         DEPLOY_JOB(PS_JOB_RADIX_MAP);
@@ -1529,8 +1660,7 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx, uint32_t thrd_id,
 
 #undef DEPLOY_JOB
 
-    // reclaim memory
-    arena->off = tmp_off;
+    ctx->arena.off = pre_sort_off;
 
     // 4 is an even number, so m_src is guaranteed to be pointing back to the
     // orig morton_codes arr, and x_src back to arrs->x. the sorted data is
@@ -1543,38 +1673,63 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx, uint32_t thrd_id,
 // public api implementation
 // =====================================================================
 
-ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* conf) {
-    if (!conf || !conf->buff || conf->buff_size < sizeof(ps_context_t)) {
+ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg) {
+    if (!cfg || !cfg->buff || cfg->buff_size < sizeof(ps_context_t)) {
         return PS_EINVAL;
     }
 
     // place ctx at beginning of buffer
-    ps_context_t* ctx = (ps_context_t*)conf->buff;
+    ps_context_t* ctx = (ps_context_t*)cfg->buff;
     ctx->root         = NULL;
-    ctx->theta        = (conf->theta > 0.0F) ? conf->theta : 1.0F;
+    ctx->theta        = (cfg->theta > 0.0F) ? cfg->theta : 1.0F;
 
-    uint32_t num_workers = conf->thrd_cnt - 1;
-    if (num_workers > PS_MAX_THRDS) {
-        num_workers = PS_MAX_THRDS;
+    uint32_t total_thrds = cfg->thrd_cnt;
+    if (total_thrds > PS_MAX_THRDS + 1) {
+        total_thrds = PS_MAX_THRDS + 1;
+    } else if (total_thrds < 1) {
+        total_thrds = 1;
     }
 
-    // arena takes the rest
-    size_t arena_start = ps_impl_align_forward(sizeof(ps_context_t), 16);
+    // calculate space needed for temp radix arrs
+    size_t radix_tmp_size = 6 * cfg->max_particles * sizeof(float);
 
-    size_t   usable_space = conf->buff_size - arena_start;
-    uint32_t total_slices = num_workers + 1; // workers + main thrd
-    size_t   slice_size   = usable_space / total_slices;
-
-    uint8_t* master_mem = (uint8_t*)conf->buff + arena_start;
-    for (uint32_t i = 0; i < total_slices; ++i) {
-        ps_impl_arena_init(&ctx->arenas[i], master_mem + (i * slice_size),
-                           slice_size);
+    // ensure we have enough mem
+    size_t arena_start = ps_impl_align_forward(sizeof(ps_context_t), 64);
+    if (arena_start + radix_tmp_size > cfg->buff_size) {
+        return PS_EOOM;
     }
+
+    // temp arrs go at end of the buffer
+    uint8_t* radix_mem = (uint8_t*)cfg->buff + cfg->buff_size - radix_tmp_size;
+
+    // wire permanent ptrs to radix_state
+    ctx->radix_state.m_dst =
+        (uint32_t*)(radix_mem + (0 * cfg->max_particles * sizeof(float)));
+    ctx->radix_state.id_dst =
+        (uint32_t*)(radix_mem + (1 * cfg->max_particles * sizeof(float)));
+    ctx->radix_state.x_dst =
+        (float*)(radix_mem + (2 * cfg->max_particles * sizeof(float)));
+    ctx->radix_state.y_dst =
+        (float*)(radix_mem + (3 * cfg->max_particles * sizeof(float)));
+    ctx->radix_state.z_dst =
+        (float*)(radix_mem + (4 * cfg->max_particles * sizeof(float)));
+    ctx->radix_state.mass_dst =
+        (float*)(radix_mem + (5 * cfg->max_particles * sizeof(float)));
+
+    size_t usable    = cfg->buff_size - arena_start - radix_tmp_size;
+    size_t max_nodes = usable / (sizeof(ps_node_t) + 16);
+
+    // global arena gets remaining space
+    ctx->arena.mem = (uint8_t*)cfg->buff + arena_start;
+    ctx->arena.cap = max_nodes * sizeof(ps_node_t);
+    ctx->arena.off = 0;
+
+    ctx->local_exp = (float (*)[4])(ctx->arena.mem + ctx->arena.cap);
 
 #ifdef PS_MULTITHREADING
 
     // initialize the pool
-    if (ps_impl_pool_init(ctx, num_workers) != 0) {
+    if (ps_impl_pool_init(ctx, total_thrds - 1) != 0) {
         return PS_EALLOC;
     }
 
@@ -1634,6 +1789,7 @@ static void ps_impl_dispatch_downward(ps_context_t* ctx, ps_node_t* target,
         ps_impl_pool_submit(ctx, job);
         return;
     }
+
     // above target depth, manually push local field down before dispatch
     for (int i = 0; i < 8; ++i) {
         ps_node_t* child = ps_impl_get_node(ctx, target->data.children_offs[i]);
@@ -1662,18 +1818,16 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     }
 
     // clear arena for new frame
-    ps_impl_arena_clear(&ctx->arenas[0]);
+    ps_impl_arena_clear(&ctx->arena);
 
     // sort the arrays based on morton_codes as keys
-    ps_impl_sort_particles(ctx, 0, morton_codes, arrs);
-
-    // allocate the root node
-    ctx->root = (ps_node_t*)ps_impl_arena_alloc(ctx, 0, sizeof(ps_node_t));
-    if (!ctx->root) {
-        return PS_EOOM;
+    ps_result_t res = ps_impl_sort_particles(ctx, morton_codes, arrs);
+    if (res != PS_OK) {
+        return res;
     }
 
-    ps_impl_node_init(ctx->root);
+    // allocate the root node
+    ctx->root = ps_impl_alloc_node(ctx);
 
     // seed geometry
     ctx->root->x          = root_cx;
@@ -1681,26 +1835,48 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     ctx->root->z          = root_cz;
     ctx->root->half_width = root_hw;
 
-    // build the octree
-    for (size_t i = 0; i < arrs->cnt; ++i) {
-        ps_impl_tree_insert(ctx, 0, ctx->root, morton_codes[i], (uint32_t)i);
+    // seed the radix state so the workers can read the morton codes
+    ctx->radix_state.m_src = morton_codes;
 
+    for (size_t i = 0; i < arrs->cnt; ++i) {
         arrs->fx[i] = 0.0F;
         arrs->fy[i] = 0.0F;
         arrs->fz[i] = 0.0F;
     }
 
-    // upward pass (p2m -> m2m)
-    ps_impl_fmm_upward_pass(ctx->root, arrs);
+    // build the octree
+    ps_impl_build_tree(ctx, 0, ctx->root, 0, 0, arrs->cnt, morton_codes);
+    ps_impl_pool_wait(ctx);
 
-    // interaction pass (m2l)
-    ps_impl_fmm_interaction_pass(ctx->root, ctx->root, ctx->theta);
+    // upward pass (p2m -> m2m)
+    ps_impl_fmm_upward_pass(ctx, ctx->root, arrs);
+
+// interaction pass (m2l)
+#ifdef PS_MULTITHREADING
+    int dispatch_depth = 2;
+    ps_impl_dispatch_fmm(ctx, PS_JOB_INTERACTION, ctx->root, ctx->root, arrs, 0,
+                         dispatch_depth);
+    ps_impl_pool_wait(ctx);
+#else
+    ps_impl_fmm_interaction_pass(ctx, ctx->root, ctx->root, ctx->theta);
+#endif
 
     // downward pass (l2l -> l2p)
-    ps_impl_fmm_downward_pass(ctx->root, arrs);
+#ifdef PS_MULTITHREADING
+    ps_impl_dispatch_downward(ctx, ctx->root, arrs, 0, dispatch_depth);
+    ps_impl_pool_wait(ctx);
+#else
+    ps_impl_fmm_downward_pass(ctx, ctx->root, arrs);
+#endif
 
-    // evaluation pass (p2p)
-    ps_impl_fmm_p2p_pass(ctx->root, ctx->root, arrs);
+// evaluation pass (p2p)
+#ifdef PS_MULTITHREADING
+    ps_impl_dispatch_fmm(ctx, PS_JOB_P2P, ctx->root, ctx->root, arrs, 0,
+                         dispatch_depth);
+    ps_impl_pool_wait(ctx);
+#else
+    ps_impl_fmm_p2p_pass(ctx, ctx->root, ctx->root, arrs, ctx->theta);
+#endif
 
     return PS_OK;
 }

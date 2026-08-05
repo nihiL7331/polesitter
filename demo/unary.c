@@ -4,14 +4,15 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#define PS_MULTITHREADING
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
-#define PARTICLE_COUNT     5000
+#define PARTICLE_COUNT     40000
 #define BLACKHOLE_MASS     1000.0F
 #define ARENA_SIZE         (1024ULL * 1024ULL * 256ULL)
 #define MAX_EXPECTED_SPEED 20
-#define THETA              3.4641F // sqrt of 12
+#define THETA              2.00F // sqrt of 12
 
 float    vx[PARTICLE_COUNT]           = {0};
 float    vy[PARTICLE_COUNT]           = {0};
@@ -51,7 +52,7 @@ void* init_polesitter(void) {
         return NULL;
     }
 
-    ps_config_t cfg = {buffer, ARENA_SIZE, THETA, 1};
+    ps_config_t cfg = {buffer, ARENA_SIZE, PARTICLE_COUNT, THETA, 4};
     ps_init(&ctx, &cfg);
 
     arrs.x    = px;
@@ -116,7 +117,7 @@ int main(void) {
 void update(void) {
     UpdateCamera(&camera, CAMERA_ORBITAL);
 
-    ps_impl_arena_clear(&ctx->arenas[0]);
+    ps_impl_arena_clear(&ctx->arena);
 
     for (int i = 0; i < PARTICLE_COUNT; ++i) {
         id[i] = i;
