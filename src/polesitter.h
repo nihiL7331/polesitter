@@ -323,9 +323,9 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 // represents one threads memory slice
 typedef struct {
-    uint8_t* mem;
-    size_t   cap;
-    size_t   off;
+    uint8_t*        mem;
+    size_t          cap;
+    volatile size_t off;
 } ps_arena_t;
 
 // octree node
