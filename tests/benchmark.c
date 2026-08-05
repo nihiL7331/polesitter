@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #define PS_MULTITHREADING
 #define POLESITTER_IMPLEMENTATION
@@ -26,11 +25,34 @@
 #define ARENA_SIZE (1024ULL * 1024ULL * 512ULL)
 #define THETA      1.0F
 
+#ifdef _WIN32
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+double get_wall_time(void) {
+    static LARGE_INTEGER freq = {0};
+    if (freq.QuadPart == 0) {
+        QueryPerformanceFrequency(&freq);
+    }
+
+    LARGE_INTEGER time;
+    QueryPerformanceCounter(&time);
+
+    return (double)time.QuadPart / (double)freq.QuadPart;
+}
+
+#else
+
+#include <time.h>
+
 double get_wall_time(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + ((double)ts.tv_nsec / 1e9);
 }
+
+#endif
 
 double get_baseline_time(int count) {
     float*    px           = ALIGNED_MALLOC(count * sizeof(float), 32);
