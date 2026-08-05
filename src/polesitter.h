@@ -309,6 +309,9 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
                                  uint32_t* out_morton_codes, float* out_min_b,
                                  float* out_max_b, float* out_range);
 
+// shuts down bg threads safely before freeing memory
+ps_result_t ps_destroy(ps_context_t* ctx);
+
 #endif // POLESITTER_H
 
 #ifdef POLESITTER_IMPLEMENTATION
@@ -1891,6 +1894,28 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
     if (out_range) {
         *out_range = range;
     }
+
+    return PS_OK;
+}
+
+ps_result_t ps_destroy(ps_context_t* ctx) {
+    if (!ctx) {
+        return PS_EINVAL;
+    }
+
+#ifdef PS_MULTITHREADING
+
+    ps_thrd_pool_t* pool = &ctx->pool;
+
+    ps_spin_lock(&pool->lock);
+    pool->shutdown_flag = 1;
+    ps_spin_unlock(&pool->lock);
+
+    for (uint32_t i = 0; i < pool->thrd_cnt; ++i) {
+        ps_thrd_join(pool->thrds[i]);
+    }
+
+#endif // PS_MULTITHREADING
 
     return PS_OK;
 }
