@@ -421,14 +421,16 @@ typedef struct ps_node {
 #ifdef PS_2D
 
 #define PS_OCTANTS         4
-#define PS_EXPANSION_TERMS 3  // 2p + 1, p = 1
-#define PS_MAX_DEPTH       16 // 16b = 65536 (2^16) leaf nodes
+#define PS_EXPANSION_TERMS 3   // 2p + 1, p = 1
+#define PS_MAX_DEPTH       16  // 16b = 65536 (2^16) leaf nodes
+#define PS_OCTANT_MASK     0x3 // 2 bits
 
 #else // PS_3D
 
 #define PS_OCTANTS         8
-#define PS_EXPANSION_TERMS 4  // (p + 1)^2, p = 1
-#define PS_MAX_DEPTH       10 // 10b = 1024 (2^10) leaf nodes
+#define PS_EXPANSION_TERMS 4   // (p + 1)^2, p = 1
+#define PS_MAX_DEPTH       10  // 10b = 1024 (2^10) leaf nodes
+#define PS_OCTANT_MASK     0x7 // 3 bits
 
 #endif // PS_3D
 
@@ -930,9 +932,9 @@ static inline ps_node_t* ps_impl_alloc_node(ps_context_t* ctx) {
 
     ps_node_t* node = (ps_node_t*)(ctx->arena.mem + old_off);
 
-    memset(node, 0, 64);
+    memset(node, 0, sizeof(ps_node_t));
 
-    uint32_t idx = (uint32_t)(old_off / 64);
+    uint32_t idx = (uint32_t)(old_off / sizeof(ps_node_t));
 
     for (int i = 0; i < PS_EXPANSION_TERMS; ++i) {
         ctx->local_exp[idx][i]     = 0.0F;
@@ -951,13 +953,15 @@ static inline ps_node_t* ps_impl_get_node(ps_context_t* ctx, uint32_t off) {
 }
 
 static inline float* ps_impl_get_local(ps_context_t* ctx, ps_node_t* node) {
-    uint32_t idx = (uint32_t)(((uint8_t*)node - ctx->arena.mem) / 64);
+    uint32_t idx =
+        (uint32_t)(((uint8_t*)node - ctx->arena.mem) / sizeof(ps_node_t));
 
     return ctx->local_exp[idx];
 }
 
 static inline float* ps_impl_get_multipole(ps_context_t* ctx, ps_node_t* node) {
-    uint32_t idx = (uint32_t)(((uint8_t*)node - ctx->arena.mem) / 64);
+    uint32_t idx =
+        (uint32_t)(((uint8_t*)node - ctx->arena.mem) / sizeof(ps_node_t));
 
     return ctx->multipole_exp[idx];
 }
@@ -975,7 +979,7 @@ static inline size_t ps_impl_find_split(const uint32_t* codes, size_t start,
     size_t right = end;
     while (left < right) {
         size_t   mid = left + ((right - left) / 2);
-        uint32_t oct = (codes[mid] >> shift) & 0x7;
+        uint32_t oct = (codes[mid] >> shift) & PS_OCTANT_MASK;
 
         if (oct < target_oct) {
             left = mid + 1;
