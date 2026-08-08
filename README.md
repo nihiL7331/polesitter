@@ -8,9 +8,10 @@
 
 ## Quickstart
 
-Include the header in one C file with `POLESITTER_IMPLEMENTATION` defined.
+Include the header in one C file with `POLESITTER_IMPLEMENTATION` defined. Define `PS_MULTITHREADING` as well when using more than one thread.
 
 ```c
+#define PS_MULTITHREADING
 #define POLESITTER_IMPLEMENTATION
 #include "polesitter.h"
 ```
@@ -18,6 +19,7 @@ Include the header in one C file with `POLESITTER_IMPLEMENTATION` defined.
 ### Basic setup
 
 ```c
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -29,7 +31,13 @@ int main(void) {
     void* memory_block = malloc(MEMORY_SIZE);
 
     // initialize the context
-    ps_config_t cfg = { memory_block, MEMORY_SIZE };
+    ps_config_t cfg = {
+        .buff = memory_block,
+        .buff_size = MEMORY_SIZE,
+        .max_particles = PARTICLE_CNT,
+        .theta = 2.0F,
+        .thrd_cnt = 4,
+    };
     ps_context_t* ctx = NULL;
     ps_init(&ctx, &cfg);
 
@@ -55,8 +63,7 @@ int main(void) {
     float dt = 0.016F; // 60FPS
     bool running = true;
     while (running) {
-        // reset arena and force accumulators for the new frame
-        ps_arena_clear(&ctx->arena);
+        // reset IDs and force accumulators for the new frame
         for (int i = 0; i < PARTICLE_CNT; ++i) {
             ids[i] = i; // reset ids before sorting
             fx[i] = 0.0F; fy[i] = 0.0F; fz[i] = 0.0F;
@@ -105,6 +112,7 @@ int main(void) {
     }
 
     // cleanup
+    ps_destroy(ctx);
     free(memory_block);
     return 0;
 }

@@ -251,7 +251,11 @@ typedef void* (*ps_thrd_func_t)(void*);
 #if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) ||             \
     defined(_M_IX86)
 
-#define PS_YIELD() _mm_pause()
+#ifdef _WIN32
+#define PS_YIELD() YieldProcessor()
+#else
+#define PS_YIELD() __asm__ volatile("pause" ::: "memory")
+#endif
 #elif defined(__aarch64__) || defined(_M_ARM64) || defined(__arm__)
 #define PS_YIELD() __asm__ volatile("yield" ::: "memory")
 #else
@@ -336,7 +340,6 @@ ps_result_t ps_destroy(ps_context_t* ctx);
 
 #endif // POLESITTER_H
 
-#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -432,12 +435,12 @@ typedef struct {
     ps_thrd_t thrds[PS_MAX_THRDS];
     uint32_t  thrd_cnt;
 
-    ps_job_t     queue[PS_MAX_JOBS];
-    volatile int hd;
-    volatile int tl;
-    volatile int cnt;
-    volatile int active_jobs;
-    volatile int shutdown_flag;
+    ps_job_t queue[PS_MAX_JOBS];
+    int      hd;
+    int      tl;
+    int      cnt;
+    int      active_jobs;
+    int      shutdown_flag;
 
     ps_spinlock_t lock;
 } ps_thrd_pool_t;
@@ -640,18 +643,28 @@ static void ps_impl_pool_submit(ps_context_t* ctx, ps_job_t job) {
     if (ctx->pool.thrd_cnt > 0) {
         ps_thrd_pool_t* pool = &ctx->pool;
 
-        // block if buffer is full
-        while (pool->cnt == PS_MAX_JOBS && !pool->shutdown_flag) {
+        // Queue state is shared with workers; inspect and update it only
+        // while holding the spinlock. volatile does not make these accesses
+        // atomic or establish inter-thread ordering in C.
+        while (1) {
+            ps_spin_lock(&pool->lock);
+
+            if (pool->shutdown_flag) {
+                ps_spin_unlock(&pool->lock);
+                return;
+            }
+
+            if (pool->cnt < PS_MAX_JOBS) {
+                pool->queue[pool->tl] = job;
+                pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
+                pool->cnt++;
+                ps_spin_unlock(&pool->lock);
+                return;
+            }
+
+            ps_spin_unlock(&pool->lock);
             PS_YIELD();
         }
-
-        // enqueue
-        ps_spin_lock(&pool->lock);
-        pool->queue[pool->tl] = job;
-        pool->tl              = (pool->tl + 1) % PS_MAX_JOBS;
-        pool->cnt++;
-        ps_spin_unlock(&pool->lock);
-        return;
     }
 
 #endif
@@ -668,15 +681,14 @@ static void ps_impl_pool_wait(ps_context_t* ctx) {
     ps_thrd_pool_t* pool = &ctx->pool;
 
     while (1) {
-        if (pool->cnt == 0 && pool->active_jobs == 0) {
+        ps_spin_lock(&pool->lock);
+        int done = (pool->cnt == 0 && pool->active_jobs == 0);
+        ps_spin_unlock(&pool->lock);
 
-            ps_spin_lock(&pool->lock);
-            int done = (pool->cnt == 0 && pool->active_jobs == 0);
-            ps_spin_unlock(&pool->lock);
-
-            if (done)
-                return;
+        if (done) {
+            return;
         }
+
         PS_YIELD();
     }
 #endif
@@ -689,18 +701,17 @@ static PS_THRD_RET_TYPE ps_impl_worker_loop(void* arg) {
     ps_thrd_pool_t*  pool  = w_arg->pool;
 
     while (1) {
-        while (pool->cnt == 0 && !pool->shutdown_flag) {
-            PS_YIELD();
-        }
-
         ps_spin_lock(&pool->lock);
 
         if (pool->cnt == 0) {
+            int shutdown = pool->shutdown_flag;
             ps_spin_unlock(&pool->lock);
-            if (pool->shutdown_flag) {
+
+            if (shutdown) {
                 break;
             }
 
+            PS_YIELD();
             continue;
         }
 
