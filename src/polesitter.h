@@ -310,13 +310,19 @@ typedef struct {
 } ps_config_t;
 
 typedef struct {
-    float*    x;
-    float*    y;
-    float*    z;
-    float*    mass;
-    float*    fx;
-    float*    fy;
-    float*    fz;
+    float* x;
+    float* y;
+#ifndef PS_2D
+    float* z;
+#endif // PS_3D
+    float* mass;
+
+    float* fx;
+    float* fy;
+#ifndef PS_2D
+    float* fz;
+#endif // PS_3D
+
     uint32_t* id;
     size_t    cnt;
 } ps_particle_arrs_t;
