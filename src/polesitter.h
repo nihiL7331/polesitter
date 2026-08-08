@@ -1557,10 +1557,14 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
         return;
     }
 
-    float dx      = src->x - target->x;
-    float dy      = src->y - target->y;
+    float dx = src->x - target->x;
+    float dy = src->y - target->y;
+#ifdef PS_2D
+    float dist_sq = (dx * dx) + (dy * dy);
+#else  // PS_3D
     float dz      = src->z - target->z;
     float dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
+#endif // PS_3D
 
     float hw_sum = target->half_width + src->half_width;
 
@@ -1572,6 +1576,168 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
     // if both are leaves and too close
     // do direct N-body force
     if ((target->data.leaf.is_leaf & 1) && (src->data.leaf.is_leaf & 1)) {
+        const float* PS_RESTRICT sx = arrs->x;
+        const float* PS_RESTRICT sy = arrs->y;
+        const float* PS_RESTRICT sm = arrs->mass;
+#ifndef PS_2D
+        const float* PS_RESTRICT sz = arrs->z;
+#endif // PS_3D
+
+#ifdef PS_2D
+
+        for (uint32_t i = 0; i < target->data.leaf.particle_cnt; ++i) {
+
+            uint32_t t_idx  = target->data.leaf.first_particle_idx + i;
+            float    t_x    = arrs->x[t_idx];
+            float    t_y    = arrs->y[t_idx];
+            float    t_mass = arrs->mass[t_idx];
+
+            float f_x = 0.0F;
+            float f_y = 0.0F;
+
+            uint32_t j = 0;
+
+#if defined(PS_USE_AVX2)
+
+            // broadcast target coords and soft param
+            __m256 t_x_vec = _mm256_set1_ps(t_x);
+            __m256 t_y_vec = _mm256_set1_ps(t_y);
+            __m256 eps_vec = _mm256_set1_ps(0.1F);
+
+            // accumulators for target particles forces
+            __m256 f_x_vec = _mm256_setzero_ps();
+            __m256 f_y_vec = _mm256_setzero_ps();
+
+            // process in chunks of 8
+            for (; j + 7 < src->data.leaf.particle_cnt; j += 8) {
+                uint32_t s_idx = src->data.leaf.first_particle_idx + j;
+
+                // load 8 source coordinates and masses
+                __m256 s_x_vec = _mm256_loadu_ps(&sx[s_idx]);
+                __m256 s_y_vec = _mm256_loadu_ps(&sy[s_idx]);
+                __m256 s_m_vec = _mm256_loadu_ps(&sm[s_idx]);
+
+                // calculate distance vectors
+                __m256 p_dx = _mm256_sub_ps(s_x_vec, t_x_vec);
+                __m256 p_dy = _mm256_sub_ps(s_y_vec, t_y_vec);
+
+                // p_dist_sq = dx*dx + dy*dy + eps
+                __m256 dist_sq =
+                    _mm256_add_ps(eps_vec, _mm256_mul_ps(p_dx, p_dx));
+                dist_sq = _mm256_add_ps(dist_sq, _mm256_mul_ps(p_dy, p_dy));
+
+                // inv sqrt 1.0F / sqrt(dist_sq)
+                __m256 inv_dist = _mm256_rsqrt_ps(dist_sq);
+
+                // inv_dist3 = inv_dist^3
+                __m256 inv_dist3 =
+                    _mm256_mul_ps(_mm256_mul_ps(inv_dist, inv_dist), inv_dist);
+
+                // F_m = mass * inv_dist3
+                __m256 force = _mm256_mul_ps(s_m_vec, inv_dist3);
+
+                // accumulate force components
+                f_x_vec = _mm256_add_ps(f_x_vec, _mm256_mul_ps(p_dx, force));
+                f_y_vec = _mm256_add_ps(f_y_vec, _mm256_mul_ps(p_dy, force));
+            }
+
+            // dump the 8 lanes back to memory and sum them up
+            float temp_fx[8], temp_fy[8];
+            _mm256_storeu_ps(temp_fx, f_x_vec);
+            _mm256_storeu_ps(temp_fy, f_y_vec);
+
+            for (int lane = 0; lane < 8; ++lane) {
+                f_x += temp_fx[lane];
+                f_y += temp_fy[lane];
+            }
+
+#elif defined(PS_USE_NEON)
+
+            // broadcast target coords and soft param
+            float32x4_t t_x_vec = vdupq_n_f32(t_x);
+            float32x4_t t_y_vec = vdupq_n_f32(t_y);
+            float32x4_t eps_vec = vdupq_n_f32(0.1F);
+
+            // accumulators for target particles forces
+            float32x4_t f_x_vec = vdupq_n_f32(0.0F);
+            float32x4_t f_y_vec = vdupq_n_f32(0.0F);
+
+            // process in chunks of 4
+            for (; j + 3 < src->data.leaf.particle_cnt; j += 4) {
+                uint32_t s_idx = src->data.leaf.first_particle_idx + j;
+
+                // load 4 source coordinates and masses
+                float32x4_t s_x_vec = vld1q_f32(&sx[s_idx]);
+                float32x4_t s_y_vec = vld1q_f32(&sy[s_idx]);
+                float32x4_t s_m_vec = vld1q_f32(&sm[s_idx]);
+
+                // calculate distance vectors
+                float32x4_t p_dx = vsubq_f32(s_x_vec, t_x_vec);
+                float32x4_t p_dy = vsubq_f32(s_y_vec, t_y_vec);
+
+                // p_dist_sq = dx*dx + dy*dy + eps
+                float32x4_t dist_sq = vmlaq_f32(eps_vec, p_dx, p_dx);
+                dist_sq             = vmlaq_f32(dist_sq, p_dy, p_dy);
+
+                // inv sqrt 1.0F / sqrt(dist_sq)
+                // estimate + newton iteration
+                float32x4_t inv_dist_est = vrsqrteq_f32(dist_sq);
+                float32x4_t nr_step      = vrsqrtsq_f32(
+                    dist_sq, vmulq_f32(inv_dist_est, inv_dist_est));
+                float32x4_t inv_dist = vmulq_f32(inv_dist_est, nr_step);
+
+                // inv_dist3 = inv_dist^3
+                float32x4_t inv_dist3 =
+                    vmulq_f32(inv_dist, vmulq_f32(inv_dist, inv_dist));
+
+                // F_m = mass * inv_dist3
+                float32x4_t force = vmulq_f32(s_m_vec, inv_dist3);
+
+                // accumulate force components
+                f_x_vec = vmlaq_f32(f_x_vec, p_dx, force);
+                f_y_vec = vmlaq_f32(f_y_vec, p_dy, force);
+            }
+
+            // dump the 4 lanes back to memory and sum them up
+            float temp_fx[4], temp_fy[4];
+            vst1q_f32(temp_fx, f_x_vec);
+            vst1q_f32(temp_fy, f_y_vec);
+
+            for (int lane = 0; lane < 4; ++lane) {
+                f_x += temp_fx[lane];
+                f_y += temp_fy[lane];
+            }
+
+#endif // PS_USE_NEON
+
+            // fallback for the remainder (previous operations left n in mod 8
+            // particles)
+            for (; j < src->data.leaf.particle_cnt; ++j) {
+                uint32_t s_idx = src->data.leaf.first_particle_idx + j;
+
+                float       p_dx = sx[s_idx] - t_x;
+                float       p_dy = sy[s_idx] - t_y;
+                const float eps  = 0.1F;
+
+                // add negligible value to prevent div by 0
+                float p_dist_sq = (p_dx * p_dx) + (p_dy * p_dy) + eps;
+
+                float inv_dist  = 1.0F / sqrtf(p_dist_sq);
+                float inv_dist3 = inv_dist * inv_dist * inv_dist;
+
+                // gravity force magnitude
+                float force = sm[s_idx] * inv_dist3;
+
+                f_x += p_dx * force;
+                f_y += p_dy * force;
+            }
+
+            arrs->fx[t_idx] += t_mass * f_x;
+            arrs->fy[t_idx] += t_mass * f_y;
+        }
+
+#else // PS_3D
+
         for (uint32_t i = 0; i < target->data.leaf.particle_cnt; ++i) {
             uint32_t t_idx  = target->data.leaf.first_particle_idx + i;
             float    t_x    = arrs->x[t_idx];
@@ -1583,13 +1749,10 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             float f_y = 0.0F;
             float f_z = 0.0F;
 
-            const float* PS_RESTRICT sx = arrs->x;
-            const float* PS_RESTRICT sy = arrs->y;
-            const float* PS_RESTRICT sz = arrs->z;
-            const float* PS_RESTRICT sm = arrs->mass;
-
             uint32_t j = 0;
+
 #if defined(PS_USE_AVX2)
+
             // broadcast target coords and soft param
             __m256 t_x_vec = _mm256_set1_ps(t_x);
             __m256 t_y_vec = _mm256_set1_ps(t_y);
@@ -1617,10 +1780,10 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
                 __m256 p_dz = _mm256_sub_ps(s_z_vec, t_z_vec);
 
                 // p_dist_sq = dx*dx + dy*dy + dz*dz + eps
-                __m256 dist_sq = _mm256_add_ps(
-                    _mm256_add_ps(_mm256_mul_ps(p_dx, p_dx),
-                                  _mm256_mul_ps(p_dy, p_dy)),
-                    _mm256_add_ps(_mm256_mul_ps(p_dz, p_dz), eps_vec));
+                __m256 dist_sq =
+                    _mm256_add_ps(eps_vec, _mm256_mul_ps(p_dx, p_dx));
+                dist_sq = _mm256_add_ps(dist_sq, _mm256_mul_ps(p_dy, p_dy));
+                dist_sq = _mm256_add_ps(dist_sq, _mm256_mul_ps(p_dz, p_dz));
 
                 // inv sqrt 1.0F / sqrt(dist_sq)
                 __m256 inv_dist = _mm256_rsqrt_ps(dist_sq);
@@ -1651,6 +1814,7 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             }
 
 #elif defined(PS_USE_NEON)
+
             // broadcast target coords and soft param
             float32x4_t t_x_vec = vdupq_n_f32(t_x);
             float32x4_t t_y_vec = vdupq_n_f32(t_y);
@@ -1713,7 +1877,9 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
                 f_y += temp_fy[lane];
                 f_z += temp_fz[lane];
             }
-#endif
+
+#endif // PS_USE_NEON
+
             // fallback for the remainder (previous operations left n in mod 8
             // particles)
             for (; j < src->data.leaf.particle_cnt; ++j) {
@@ -1742,6 +1908,8 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             arrs->fy[t_idx] += t_mass * f_y;
             arrs->fz[t_idx] += t_mass * f_z;
         }
+
+#endif // PS_3D
 
         return;
     }
@@ -1977,8 +2145,8 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx,
         ps_impl_pool_wait(ctx);
 
         // reduce
-        // calculates exactly where each thread should start writing for each
-        // bucket
+        // calculates exactly where each thread should start writing for
+        // each bucket
         uint32_t run_off = 0;
         for (int bucket = 0; bucket < 256; ++bucket) {
             for (uint32_t chunk = 0; chunk < num_chunks; ++chunk) {
@@ -2006,9 +2174,9 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx,
 
     ctx->arena.off = pre_sort_off;
 
-    // 4 is an even number, so m_src is guaranteed to be pointing back to the
-    // orig morton_codes arr, and x_src back to arrs->x. the sorted data is
-    // right where it started. temp arrays will be cleared next frame.
+    // 4 is an even number, so m_src is guaranteed to be pointing back to
+    // the orig morton_codes arr, and x_src back to arrs->x. the sorted data
+    // is right where it started. temp arrays will be cleared next frame.
 
     return PS_OK;
 }
