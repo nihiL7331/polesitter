@@ -8,7 +8,9 @@
 
 ## Quickstart
 
-Include the header in one C file with `POLESITTER_IMPLEMENTATION` defined. Define `PS_MULTITHREADING` as well when using more than one thread.
+Include the header in one C file with `POLESITTER_IMPLEMENTATION` defined. \
+Define `PS_MULTITHREADING` as well when using more than one thread. \
+Define `PS_2D` when simulating in two-dimensional space.
 
 ```c
 #define PS_MULTITHREADING

@@ -9,11 +9,14 @@
 
    Use #define PS_MULTITHREADING to enable multithreading capabilities.
 
+   Use #define PS_2D to toggle 2D mode.
+
     // i.e. it should look like this:
     #include ...
     #include ...
     #include ...
     #define PS_MULTITHREADING
+    #define PS_2D
     #define POLESITTER_IMPLEMENTATION
     #include "polesitter.h"
 
