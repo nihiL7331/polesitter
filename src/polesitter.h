@@ -1070,6 +1070,34 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
 
     // p2m
     if (node->data.leaf.is_leaf & 1) {
+        float* n_multi = ps_impl_get_multipole(ctx, node);
+
+#ifdef PS_2D
+
+        float m0 = 0.0F; // monopole (total mass)
+        float mx = 0.0F; // dipole x (mass moment)
+        float my = 0.0F; // dipole y
+
+        for (uint32_t i = 0; i < node->data.leaf.particle_cnt; ++i) {
+            uint32_t idx  = node->data.leaf.first_particle_idx + i;
+            float    mass = arrs->mass[idx];
+
+            // dist from particle pos to center of this voxel
+            float dx = arrs->x[idx] - node->x;
+            float dy = arrs->y[idx] - node->y;
+
+            m0 += mass;
+            mx += mass * dx;
+            my += mass * dy;
+        }
+
+        // store expansion payload
+        n_multi[0] = m0;
+        n_multi[1] = mx;
+        n_multi[2] = my;
+
+#else // PS_3D
+
         float m0 = 0.0F; // monopole (total mass)
         float mx = 0.0F; // dipole x (mass moment)
         float my = 0.0F; // dipole y
@@ -1091,15 +1119,58 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         }
 
         // store expansion payload
-        float* n_multi = ps_impl_get_multipole(ctx, node);
-        n_multi[0]     = m0;
-        n_multi[1]     = mx;
-        n_multi[2]     = my;
-        n_multi[3]     = mz;
+        n_multi[0] = m0;
+        n_multi[1] = mx;
+        n_multi[2] = my;
+        n_multi[3] = mz;
+
+#endif // PS_3D
+
         return;
     }
 
     // m2m
+
+#ifdef PS_2D
+
+    float p_m0 = 0.0F;
+    float p_mx = 0.0F;
+    float p_my = 0.0F;
+
+    for (int i = 0; i < PS_OCTANTS; ++i) {
+        ps_node_t* child = ps_impl_get_node(ctx, node->data.children_offs[i]);
+        if (!child) {
+            continue;
+        }
+
+        // calc the children first
+        ps_impl_fmm_upward_pass(ctx, child, arrs);
+
+        // dist vector from the child's center
+        // up to the parent's center
+        float dx = child->x - node->x;
+        float dy = child->y - node->y;
+
+        float* c_multi = ps_impl_get_multipole(ctx, child);
+        float  c_m0    = c_multi[0];
+        float  c_mx    = c_multi[1];
+        float  c_my    = c_multi[2];
+
+        // shift the childs expansion to the parents center and accumulate
+        // dipole requires the monopole * dist
+        p_m0 += c_m0;
+        p_mx += c_mx + (c_m0 * dx);
+        p_my += c_my + (c_m0 * dy);
+    }
+
+    // store aggregated expansion in parent
+    float* n_multi = ps_impl_get_multipole(ctx, node);
+    n_multi[0]     = p_m0;
+    n_multi[1]     = p_mx;
+    n_multi[2]     = p_my;
+
+#else // PS_3D
+
     float p_m0 = 0.0F;
     float p_mx = 0.0F;
     float p_my = 0.0F;
@@ -1140,6 +1211,8 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
     n_multi[1]     = p_mx;
     n_multi[2]     = p_my;
     n_multi[3]     = p_mz;
+
+#endif // PS_3D
 }
 
 // pass 2
