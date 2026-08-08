@@ -1140,23 +1140,48 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
             ps_impl_fmm_interaction_pass(ctx, target_child, src, theta);
         }
     } else {
-        // subdivide both and pair all 64 permutations
-        for (int i = 0; i < 8; ++i) {
-            ps_node_t* target_child =
-                ps_impl_get_node(ctx, target->data.children_offs[i]);
-            if (!target_child) {
-                continue;
-            }
-
-            for (int j = 0; j < 8; ++j) {
+        // subdivide larger to ensure symmetric depth traversal
+        if (src->half_width > target->half_width * 1.01F) {
+            // source is larger, subdivide source only
+            for (int i = 0; i < 8; ++i) {
                 ps_node_t* src_child =
-                    ps_impl_get_node(ctx, src->data.children_offs[j]);
+                    ps_impl_get_node(ctx, src->data.children_offs[i]);
                 if (!src_child) {
                     continue;
                 }
 
-                ps_impl_fmm_interaction_pass(ctx, target_child, src_child,
-                                             theta);
+                ps_impl_fmm_interaction_pass(ctx, target, src_child, theta);
+            }
+        } else if (target->half_width > src->half_width * 1.01F) {
+            // target is larger, subdivide target only
+            for (int i = 0; i < 8; ++i) {
+                ps_node_t* target_child =
+                    ps_impl_get_node(ctx, target->data.children_offs[i]);
+                if (!target_child) {
+                    continue;
+                }
+
+                ps_impl_fmm_interaction_pass(ctx, target_child, src, theta);
+            }
+        } else {
+            // same size, subdivide both and pair permutations
+            for (int i = 0; i < 8; ++i) {
+                ps_node_t* target_child =
+                    ps_impl_get_node(ctx, target->data.children_offs[i]);
+                if (!target_child) {
+                    continue;
+                }
+
+                for (int j = 0; j < 8; ++j) {
+                    ps_node_t* src_child =
+                        ps_impl_get_node(ctx, src->data.children_offs[j]);
+                    if (!src_child) {
+                        continue;
+                    }
+
+                    ps_impl_fmm_interaction_pass(ctx, target_child, src_child,
+                                                 theta);
+                }
             }
         }
     }
@@ -1490,21 +1515,47 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             ps_impl_fmm_p2p_pass(ctx, target_child, src, arrs, theta);
         }
     } else {
-        for (int i = 0; i < 8; ++i) {
-            ps_node_t* target_child =
-                ps_impl_get_node(ctx, target->data.children_offs[i]);
-            if (!target_child) {
-                continue;
-            }
-
-            for (int j = 0; j < 8; ++j) {
+        if (src->half_width > target->half_width * 1.01F) {
+            // source is larger, subdivice source only
+            for (int i = 0; i < 8; ++i) {
                 ps_node_t* src_child =
-                    ps_impl_get_node(ctx, src->data.children_offs[j]);
+                    ps_impl_get_node(ctx, src->data.children_offs[i]);
                 if (!src_child) {
                     continue;
                 }
 
-                ps_impl_fmm_p2p_pass(ctx, target_child, src_child, arrs, theta);
+                ps_impl_fmm_p2p_pass(ctx, target, src_child, arrs, theta);
+            }
+        } else if (target->half_width > src->half_width * 1.01F) {
+            // target is larger, subdivide target only
+            for (int i = 0; i < 8; ++i) {
+                ps_node_t* target_child =
+                    ps_impl_get_node(ctx, target->data.children_offs[i]);
+                if (!target_child) {
+                    continue;
+                }
+
+                ps_impl_fmm_p2p_pass(ctx, target_child, src, arrs, theta);
+            }
+        } else {
+            // same size, subdivide both
+            for (int i = 0; i < 8; ++i) {
+                ps_node_t* target_child =
+                    ps_impl_get_node(ctx, target->data.children_offs[i]);
+                if (!target_child) {
+                    continue;
+                }
+
+                for (int j = 0; j < 8; ++j) {
+                    ps_node_t* src_child =
+                        ps_impl_get_node(ctx, src->data.children_offs[j]);
+                    if (!src_child) {
+                        continue;
+                    }
+
+                    ps_impl_fmm_p2p_pass(ctx, target_child, src_child, arrs,
+                                         theta);
+                }
             }
         }
     }
