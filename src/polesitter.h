@@ -364,17 +364,43 @@ typedef struct {
     volatile size_t off;
 } ps_arena_t;
 
-// octree node
-// exactly 64 bytes (1 cache line)
+#ifdef PS_2D
+
+// quadtree node
+// exactly 32 bytes (2/cache line)
 typedef struct ps_node {
     // physics, 16B
     float    x;
     float    y;
-    float    z;
     float    half_width; // needed for M2L
-    uint32_t _pad[4];
+    uint32_t _pad;
 
-    // FMM payload
+    // FMM payload, 16B
+    union {
+        uint32_t children_offs[4];
+
+        struct {
+            uint32_t is_leaf;
+            uint32_t particle_cnt;
+            uint32_t first_particle_idx;
+            uint32_t _pad2;
+        } leaf;
+    } data;
+} ps_node_t;
+
+#else // PS_3D
+
+// octree node
+// exactly 64 bytes (1 cache line)
+typedef struct ps_node {
+    // physics, 16B
+    float x;
+    float y;
+    float z;
+    float half_width; // needed for M2L
+
+    // FMM payload, 48B
+    uint32_t _pad[4];
     union {
         uint32_t children_offs[8];
 
