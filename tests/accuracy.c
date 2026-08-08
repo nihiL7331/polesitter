@@ -9,7 +9,7 @@
 
 #define ARENA_SIZE   (1024ULL * 1024ULL * 32ULL)
 #define SOFTENING_SQ 0.1F
-#define THETA        2.0F
+#define THETA        3.4641F
 
 static int g_failures = 0;
 
@@ -348,75 +348,25 @@ static void run_st_vs_mt_test(void) {
         return;
     }
 
+    // interaction pass (m2l)
     ps_impl_fmm_interaction_pass(ctx_st, ctx_st->root, ctx_st->root, THETA);
-    for (int i = 0; i < 8; ++i) {
-        ps_node_t* root_child =
-            ps_impl_get_node(ctx_mt, ctx_mt->root->data.children_offs[i]);
-        if (!root_child) {
-            continue;
-        }
-
-        ps_job_t job;
-        job.type            = PS_JOB_INTERACTION;
-        job.data.fmm.target = root_child;
-        job.data.fmm.src    = ctx_mt->root;
-        ps_impl_pool_submit(ctx_mt, job);
-    }
+    ps_impl_dispatch_fmm(ctx_mt, PS_JOB_INTERACTION, ctx_mt->root, ctx_mt->root,
+                         &arrs_mt, 0, 2);
     ps_impl_pool_wait(ctx_mt);
-    if (!comp_trees_rec(ctx_st, ctx_mt, ctx_st->root, ctx_mt->root, 0,
-                        "INTERACTION PASS")) {
-        return;
-    }
 
     // downward pass (l2l -> l2p)
     ps_impl_fmm_downward_pass(ctx_st, ctx_st->root, &arrs_st);
-    for (int i = 0; i < 8; ++i) {
-        ps_node_t* root_child =
-            ps_impl_get_node(ctx_mt, ctx_mt->root->data.children_offs[i]);
-        if (!root_child) {
-            continue;
-        }
-
-        // shift the roots bg field into the child sequentially
-        float* root_child_local = ps_impl_get_local(ctx_mt, root_child);
-        float* root_local       = ps_impl_get_local(ctx_mt, ctx_mt->root);
-        root_child_local[1] += root_local[1];
-        root_child_local[2] += root_local[2];
-        root_child_local[3] += root_local[3];
-
-        ps_job_t job;
-        job.type          = PS_JOB_DOWNWARD;
-        job.data.fmm.src  = root_child;
-        job.data.fmm.arrs = &arrs_mt;
-        ps_impl_pool_submit(ctx_mt, job);
-    }
+    ps_impl_dispatch_downward(ctx_mt, ctx_mt->root, &arrs_mt, 0, 2);
     ps_impl_pool_wait(ctx_mt);
     if (!comp_arrs("DOWNWARD PASS ARRAYS", cnt, &arrs_st, &arrs_mt, mo_st,
                    mo_mt)) {
         return;
     }
-    if (!comp_trees_rec(ctx_st, ctx_mt, ctx_st->root, ctx_mt->root, 0,
-                        "DOWNWARD PASS TREE")) {
-        return;
-    }
 
     // evaluation pass (p2p)
-    ps_impl_fmm_p2p_pass(ctx_st, ctx_st->root, ctx_st->root, &arrs_st,
-                         ctx_st->theta);
-    for (int i = 0; i < 8; ++i) {
-        ps_node_t* root_child =
-            ps_impl_get_node(ctx_mt, ctx_mt->root->data.children_offs[i]);
-        if (!root_child) {
-            continue;
-        }
-
-        ps_job_t job;
-        job.type            = PS_JOB_P2P;
-        job.data.fmm.target = root_child;
-        job.data.fmm.src    = ctx_mt->root;
-        job.data.fmm.arrs   = &arrs_mt;
-        ps_impl_pool_submit(ctx_mt, job);
-    }
+    ps_impl_fmm_p2p_pass(ctx_st, ctx_st->root, ctx_st->root, &arrs_st, THETA);
+    ps_impl_dispatch_fmm(ctx_mt, PS_JOB_P2P, ctx_mt->root, ctx_mt->root,
+                         &arrs_mt, 0, 2);
     ps_impl_pool_wait(ctx_mt);
     if (!comp_arrs("P2P PASS", cnt, &arrs_st, &arrs_mt, mo_st, mo_mt)) {
         return;
