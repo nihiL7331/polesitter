@@ -154,6 +154,7 @@ static int comp_arrs(const char* phase, size_t cnt, ps_particle_arrs_t* st,
                    "ST(%.2f,%.2f,%.2f) MT(%.2f,%.2f,%.2f)",
                    phase, i, st->id[i], st->fx[i], st->fy[i], st->fz[i],
                    mt->fx[i], mt->fy[i], mt->fz[i]);
+            mismatches++;
 
             if (mismatches >= 5) {
                 break;
