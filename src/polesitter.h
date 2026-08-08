@@ -915,7 +915,7 @@ static inline ps_node_t* ps_impl_alloc_node(ps_context_t* ctx) {
         return NULL;
     }
 
-    size_t size = 64;
+    const size_t size = sizeof(ps_node_t);
 
 #ifdef PS_MULTITHREADING
     size_t old_off = ps_atomic_fetch_add_size_t(&ctx->arena.off, size);
