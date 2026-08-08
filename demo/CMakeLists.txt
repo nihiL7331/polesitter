@@ -8,9 +8,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_executable(polesitter_unary unary.c)
 add_executable(polesitter_binary binary.c)
+add_executable(polesitter_unary_2d unary_2d.c)
 
 target_include_directories(polesitter_unary PRIVATE ../src)
 target_include_directories(polesitter_binary PRIVATE ../src)
+target_include_directories(polesitter_unary_2d PRIVATE ../src)
 
 find_package(raylib QUIET)
 
@@ -27,10 +29,12 @@ endif()
 
 target_link_libraries(polesitter_unary PRIVATE raylib)
 target_link_libraries(polesitter_binary PRIVATE raylib)
+target_link_libraries(polesitter_unary_2d PRIVATE raylib)
 
 if(NOT MSVC)
     target_link_libraries(polesitter_unary PRIVATE m)
     target_link_libraries(polesitter_binary PRIVATE m)
+    target_link_libraries(polesitter_unary_2d PRIVATE m)
 endif()
 
 if(MSVC)
@@ -41,3 +45,4 @@ endif()
 
 target_compile_options(polesitter_unary PRIVATE ${POLESITTER_FLAGS})
 target_compile_options(polesitter_binary PRIVATE ${POLESITTER_FLAGS})
+target_compile_options(polesitter_unary_2d PRIVATE ${POLESITTER_FLAGS})
