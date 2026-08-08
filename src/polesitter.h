@@ -2018,11 +2018,13 @@ static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
         uint8_t bucket = (uint8_t)((rs->m_src[i] >> shift) & 0xFF);
         uint8_t c      = buf->cnt[bucket];
 
-        buf->m[bucket][c]    = rs->m_src[i];
-        buf->id[bucket][c]   = rs->id_src[i];
-        buf->x[bucket][c]    = rs->x_src[i];
-        buf->y[bucket][c]    = rs->y_src[i];
-        buf->z[bucket][c]    = rs->z_src[i];
+        buf->m[bucket][c]  = rs->m_src[i];
+        buf->id[bucket][c] = rs->id_src[i];
+        buf->x[bucket][c]  = rs->x_src[i];
+        buf->y[bucket][c]  = rs->y_src[i];
+#ifndef PS_2D
+        buf->z[bucket][c] = rs->z_src[i];
+#endif // PS_3D
         buf->mass[bucket][c] = rs->mass_src[i];
 
         c++;
@@ -2032,11 +2034,13 @@ static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
             uint32_t dst_idx = local_offs[bucket];
 
             for (int j = 0; j < PS_RADIX_BUF_SIZE; ++j) {
-                rs->m_dst[dst_idx + j]    = buf->m[bucket][j];
-                rs->id_dst[dst_idx + j]   = buf->id[bucket][j];
-                rs->x_dst[dst_idx + j]    = buf->x[bucket][j];
-                rs->y_dst[dst_idx + j]    = buf->y[bucket][j];
-                rs->z_dst[dst_idx + j]    = buf->z[bucket][j];
+                rs->m_dst[dst_idx + j]  = buf->m[bucket][j];
+                rs->id_dst[dst_idx + j] = buf->id[bucket][j];
+                rs->x_dst[dst_idx + j]  = buf->x[bucket][j];
+                rs->y_dst[dst_idx + j]  = buf->y[bucket][j];
+#ifndef PS_2D
+                rs->z_dst[dst_idx + j] = buf->z[bucket][j];
+#endif // PS_3D
                 rs->mass_dst[dst_idx + j] = buf->mass[bucket][j];
             }
 
@@ -2054,11 +2058,13 @@ static void ps_impl_radix_scatter(ps_context_t* ctx, uint32_t chunk_id,
             uint32_t dst_idx = local_offs[bucket];
 
             for (int j = 0; j < rem; ++j) {
-                rs->m_dst[dst_idx + j]    = buf->m[bucket][j];
-                rs->id_dst[dst_idx + j]   = buf->id[bucket][j];
-                rs->x_dst[dst_idx + j]    = buf->x[bucket][j];
-                rs->y_dst[dst_idx + j]    = buf->y[bucket][j];
-                rs->z_dst[dst_idx + j]    = buf->z[bucket][j];
+                rs->m_dst[dst_idx + j]  = buf->m[bucket][j];
+                rs->id_dst[dst_idx + j] = buf->id[bucket][j];
+                rs->x_dst[dst_idx + j]  = buf->x[bucket][j];
+                rs->y_dst[dst_idx + j]  = buf->y[bucket][j];
+#ifndef PS_2D
+                rs->z_dst[dst_idx + j] = buf->z[bucket][j];
+#endif // PS_3D
                 rs->mass_dst[dst_idx + j] = buf->mass[bucket][j];
             }
 
