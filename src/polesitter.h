@@ -422,12 +422,14 @@ typedef struct ps_node {
 #ifdef PS_2D
 
 #define PS_OCTANTS         4
-#define PS_EXPANSION_TERMS 3 // 2p + 1, p = 1
+#define PS_EXPANSION_TERMS 3  // 2p + 1, p = 1
+#define PS_MAX_DEPTH       16 // 16b = 65536 (2^16) leaf nodes
 
 #else // PS_3D
 
 #define PS_OCTANTS         8
-#define PS_EXPANSION_TERMS 4 // (p + 1)^2, p = 1
+#define PS_EXPANSION_TERMS 4  // (p + 1)^2, p = 1
+#define PS_MAX_DEPTH       10 // 10b = 1024 (2^10) leaf nodes
 
 #endif // PS_3D
 
@@ -965,9 +967,6 @@ static inline float* ps_impl_get_multipole(ps_context_t* ctx, ps_node_t* node) {
 static void ps_impl_arena_clear(ps_arena_t* arena) {
     arena->off = 0;
 }
-
-#define PS_MAX_DEPTH                                                           \
-    10 // max depth of octree, 10 levels = 1024 (2^10) leaf nodes
 
 // bin search to find the idx where target oct begins
 static inline size_t ps_impl_find_split(const uint32_t* codes, size_t start,
