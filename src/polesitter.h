@@ -414,6 +414,14 @@ typedef struct ps_node {
     } data;
 } ps_node_t;
 
+#endif // PS_3D
+
+#ifdef PS_2D
+#define PS_OCTANTS 4
+#else // PS_3D
+#define PS_OCTANTS 8
+#endif // PS_3D
+
 #ifndef PS_MAX_THRDS
 #define PS_MAX_THRDS 32
 #endif // PS_MAX_THRDS
@@ -808,6 +816,33 @@ static int ps_impl_pool_init(ps_context_t* ctx, uint32_t num_thrds) {
 
 #endif // PS_MULTITHREADING
 
+#ifdef PS_2D
+
+// take a 16b num and expand it to 32b by inserting 1 0 between each b.
+static uint32_t ps_impl_expand_bits(uint32_t v) {
+    v &= 0x0000FFFF; // only look at 16 ls bits
+
+    v = (v | (v << 8)) & 0x00FF00FF;
+    v = (v | (v << 4)) & 0x0F0F0F0F;
+    v = (v | (v << 2)) & 0x33333333;
+    v = (v | (v << 1)) & 0x55555555;
+
+    return v;
+}
+
+// final number has 32 bits.
+// dividing it by 2 dimensions, we can store 16 bits per dimension.
+// it interleaves the expanded bits of x and y.
+static uint32_t ps_impl_morton_encode(uint32_t x, uint32_t y) {
+    uint32_t xx = ps_impl_expand_bits(x);
+    uint32_t yy = ps_impl_expand_bits(y);
+
+    // x takes bit 0, y shifts to bit 1 ...
+    return xx | (yy << 1);
+}
+
+#else // PS_3D
+
 // take a 10b num and expand it to 30b by inserting 2 0s between each b.
 static uint32_t ps_impl_expand_bits(uint32_t v) {
     v &= 0x000003FF; // only look at 10 ls bits
@@ -831,6 +866,8 @@ static uint32_t ps_impl_morton_encode(uint32_t x, uint32_t y, uint32_t z) {
     // x takes bit 0, y shifts to bit 1, z shifts to bit 2
     return xx | (yy << 1) | (zz << 2);
 }
+
+#endif // PS_3D
 
 // rounds 'v' up to the nearest multiple of 'align', which must be a power of 2
 static inline size_t ps_impl_align_forward(size_t v, size_t align) {
