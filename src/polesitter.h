@@ -1001,11 +1001,17 @@ static void ps_impl_build_tree(ps_context_t* ctx, uint32_t thrd_id,
         return;
     }
 
+#ifdef PS_2D
+    // shift starts at 30, decreases by 2 each lvl
+    uint8_t shift = (uint8_t)(30 - (depth * 2));
+#else  // PS_3D
     // shift starts at 27, decreases by 3 each lvl
-    uint8_t shift      = (uint8_t)(27 - (depth * 3));
-    size_t  curr_start = start_idx;
+    uint8_t shift = (uint8_t)(27 - (depth * 3));
+#endif // PS_3D
 
-    // subdivide into 8 octants
+    size_t curr_start = start_idx;
+
+    // subdivide into 4 quadrants/8 octants
     for (uint32_t oct = 0; oct < PS_OCTANTS; ++oct) {
         // find where this octnat ends in the sorted arr
         size_t oct_end = ps_impl_find_split(morton_codes, curr_start, end_idx,
@@ -1018,10 +1024,12 @@ static void ps_impl_build_tree(ps_context_t* ctx, uint32_t thrd_id,
                 return;
             }
 
-            float hw          = node->half_width * 0.5F;
-            child->x          = node->x + ((oct & 1) ? hw : -hw);
-            child->y          = node->y + ((oct & 2) ? hw : -hw);
-            child->z          = node->z + ((oct & 4) ? hw : -hw);
+            float hw = node->half_width * 0.5F;
+            child->x = node->x + ((oct & 1) ? hw : -hw);
+            child->y = node->y + ((oct & 2) ? hw : -hw);
+#ifndef PS_2D
+            child->z = node->z + ((oct & 4) ? hw : -hw);
+#endif // PS_3D
             child->half_width = hw;
 
             node->data.children_offs[oct] =
