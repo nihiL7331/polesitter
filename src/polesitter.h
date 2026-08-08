@@ -333,7 +333,10 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg);
 // compute forces on particles using FMM
 ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
                            uint32_t* morton_codes, float root_cx, float root_cy,
-                           float root_cz, float root_hw);
+#ifndef PS_2D
+                           float root_cz,
+#endif // PS_3D
+                           float root_hw);
 
 // calculates the global bounding box and generates morton codes for all
 // particles
@@ -1985,7 +1988,10 @@ static void ps_impl_dispatch_downward(ps_context_t* ctx, ps_node_t* target,
 
 ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
                            uint32_t* morton_codes, float root_cx, float root_cy,
-                           float root_cz, float root_hw) {
+#ifndef PS_2D
+                           float root_cz,
+#endif // PS_3D
+                           float root_hw) {
     if (!ctx || !arrs) {
         return PS_EINVAL;
     }
@@ -2003,9 +2009,11 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     ctx->root = ps_impl_alloc_node(ctx);
 
     // seed geometry
-    ctx->root->x          = root_cx;
-    ctx->root->y          = root_cy;
-    ctx->root->z          = root_cz;
+    ctx->root->x = root_cx;
+    ctx->root->y = root_cy;
+#ifndef PS_2D
+    ctx->root->z = root_cz;
+#endif // PS_3D
     ctx->root->half_width = root_hw;
 
     // seed the radix state so the workers can read the morton codes
@@ -2014,7 +2022,9 @@ ps_result_t ps_calc_forces(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
     for (size_t i = 0; i < arrs->cnt; ++i) {
         arrs->fx[i] = 0.0F;
         arrs->fy[i] = 0.0F;
+#ifndef PS_2D
         arrs->fz[i] = 0.0F;
+#endif // PS_3D
     }
 
     // build the octree
