@@ -1223,10 +1223,14 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         return;
     }
 
-    float dx      = src->x - target->x;
-    float dy      = src->y - target->y;
+    float dx = src->x - target->x;
+    float dy = src->y - target->y;
+#ifdef PS_2D
+    float dist_sq = (dx * dx) + (dy * dy);
+#else  // PS_3D
     float dz      = src->z - target->z;
     float dist_sq = (dx * dx) + (dy * dy) + (dz * dz);
+#endif // PS_3D
 
     float hw_sum = target->half_width + src->half_width;
 
@@ -1238,10 +1242,35 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         float inv_r5       = inv_r3 / soft_dist_sq;
 
         float* s_multi = ps_impl_get_multipole(ctx, src);
-        float  m0      = s_multi[0];
-        float  mx      = s_multi[1];
-        float  my      = s_multi[2];
-        float  mz      = s_multi[3];
+        float* t_local = ps_impl_get_local(ctx, target);
+
+#ifdef PS_2D
+
+        float m0 = s_multi[0];
+        float mx = s_multi[1];
+        float my = s_multi[2];
+
+        // monopole contribution to target's local field
+        float force_m0_x = m0 * dx * inv_r3;
+        float force_m0_y = m0 * dy * inv_r3;
+
+        // dipole contribution to target's local field
+        float m_dot_r      = (mx * dx) + (my * dy);
+        float dipole_coeff = 3.0F * m_dot_r * inv_r5;
+
+        float force_dip_x = (mx * inv_r3) - (dx * dipole_coeff);
+        float force_dip_y = (my * inv_r3) - (dy * dipole_coeff);
+
+        // accumulate into target's local expansion
+        t_local[1] += force_m0_x + force_dip_x;
+        t_local[2] += force_m0_y + force_dip_y;
+
+#else // PS_3D
+
+        float m0 = s_multi[0];
+        float mx = s_multi[1];
+        float my = s_multi[2];
+        float mz = s_multi[3];
 
         // monopole contribution to target's local field
         float force_m0_x = m0 * dx * inv_r3;
@@ -1257,10 +1286,11 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         float force_dip_z = (mz * inv_r3) - (dz * dipole_coeff);
 
         // accumulate into target's local expansion
-        float* t_local = ps_impl_get_local(ctx, target);
         t_local[1] += force_m0_x + force_dip_x;
         t_local[2] += force_m0_y + force_dip_y;
         t_local[3] += force_m0_z + force_dip_z;
+
+#endif // PS_3D
 
         return;
     }
