@@ -417,9 +417,15 @@ typedef struct ps_node {
 #endif // PS_3D
 
 #ifdef PS_2D
-#define PS_OCTANTS 4
+
+#define PS_OCTANTS         4
+#define PS_EXPANSION_TERMS 3 // 2p + 1, p = 1
+
 #else // PS_3D
-#define PS_OCTANTS 8
+
+#define PS_OCTANTS         8
+#define PS_EXPANSION_TERMS 4 // (p + 1)^2, p = 1
+
 #endif // PS_3D
 
 #ifndef PS_MAX_THRDS
@@ -534,8 +540,8 @@ struct ps_context {
     ps_node_t* root;
     float      theta;
     ps_arena_t arena;
-    float (*local_exp)[4];
-    float (*multipole_exp)[4];
+    float (*local_exp)[PS_EXPANSION_TERMS];
+    float (*multipole_exp)[PS_EXPANSION_TERMS];
     ps_radix_state_t radix_state;
 
 #ifdef PS_MULTITHREADING
@@ -1876,8 +1882,10 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg) {
     ctx->radix_state.mass_dst =
         (float*)(radix_mem + (5 * cfg->max_particles * sizeof(float)));
 
-    size_t usable    = cfg->buff_size - arena_start - radix_tmp_size;
-    size_t max_nodes = usable / (sizeof(ps_node_t) + 32);
+    size_t par_arrs_size = 2 * (PS_EXPANSION_TERMS * sizeof(float));
+    size_t footprint     = sizeof(ps_node_t) + par_arrs_size;
+    size_t usable        = cfg->buff_size - arena_start - radix_tmp_size;
+    size_t max_nodes     = usable / footprint;
 
     // global arena gets remaining space
     ctx->arena.mem = (uint8_t*)cfg->buff + arena_start;
@@ -1886,8 +1894,8 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg) {
 
     // clang-format off
 
-    ctx->local_exp = (float (*)[4])(ctx->arena.mem + ctx->arena.cap);
-    ctx->multipole_exp = (float (*)[4])((uint8_t*)ctx->local_exp + (max_nodes * 16));
+    ctx->local_exp = (float (*)[PS_EXPANSION_TERMS])(ctx->arena.mem + ctx->arena.cap);
+    ctx->multipole_exp = (float (*)[PS_EXPANSION_TERMS])((uint8_t*)ctx->local_exp + (max_nodes * PS_EXPANSION_TERMS * sizeof(float)));
 
     // clang-format on
 
