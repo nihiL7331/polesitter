@@ -91,8 +91,9 @@ static void run_dipole_sign_test(void) {
     source->half_width = 1.0F;
 
     /* One unit mass displaced +1 from the source-cell center. */
-    source->multipole[0] = 1.0F;
-    source->multipole[1] = 1.0F;
+    float* s_multi = ps_impl_get_multipole(ctx, source);
+    s_multi[0]     = 1.0F;
+    s_multi[1]     = 1.0F;
 
     ps_impl_fmm_interaction_pass(ctx, target, source, THETA);
 
@@ -197,16 +198,18 @@ static int comp_trees_rec(ps_context_t* ctx_st, ps_context_t* ctx_mt,
         }
     }
 
+    float* a_multi = ps_impl_get_multipole(ctx_st, a);
+    float* b_multi = ps_impl_get_multipole(ctx_mt, b);
+    float* a_local = ps_impl_get_local(ctx_st, a);
+    float* b_local = ps_impl_get_local(ctx_mt, b);
     for (int i = 0; i < 4; ++i) {
-        if (fabs(a->multipole[i] - b->multipole[i]) > 1e-4F) {
+        if (fabs(a_multi[i] - b_multi[i]) > 1e-4F) {
             printf(
                 "[%s] Multipole mismatch at depth %d, idx %d: ST=%f, MT=%f\n",
-                phase, depth, i, a->multipole[i], b->multipole[i]);
+                phase, depth, i, a_multi[i], b_multi[i]);
             return 0;
         }
 
-        float* a_local = ps_impl_get_local(ctx_st, a);
-        float* b_local = ps_impl_get_local(ctx_mt, b);
         if (fabs(a_local[i] - b_local[i]) > 1e-4F) {
             printf(
                 "[%s] Local field mismatch at depth %d, idx %d: ST=%f, MT=%f\n",

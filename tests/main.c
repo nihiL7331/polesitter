@@ -73,7 +73,7 @@ void test_morton_encoding(void) {
 
 void test_arena_allocator(void) {
     size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
-    size_t total_mem = ctx_size + 256;
+    size_t total_mem = ctx_size + 512;
 
     void* buffer = ALIGNED_MALLOC(total_mem, 64);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");
@@ -85,7 +85,8 @@ void test_arena_allocator(void) {
     TEST_ASSERT(res == PS_OK, "Failed to initialize context");
     TEST_ASSERT(ctx != NULL, "Context pointer is null");
 
-    TEST_ASSERT(ctx->arena.cap == total_mem - ctx_size - 128,
+    printf("%lu == %lu - %lu - 128\n", ctx->arena.cap, total_mem, ctx_size);
+    TEST_ASSERT(ctx->arena.cap == total_mem - ctx_size - 256,
                 "Arena capacity mismatch");
     TEST_ASSERT(ctx->arena.off == 0, "Arena offset should start at 0");
 
@@ -104,7 +105,7 @@ void test_arena_allocator(void) {
                 "2nd allocation not 16B after 1st allocation");
 
     // oom test
-    void* ptr3 = ps_impl_arena_alloc(ctx, 64);
+    void* ptr3 = ps_impl_arena_alloc(ctx, 256);
     TEST_ASSERT(ptr3 == NULL, "3rd allocation should have failed due to OOM");
 
     // clear test
@@ -270,10 +271,11 @@ void test_fmm_upward_pass(void) {
     ps_node_t* root = ctx->root;
     TEST_ASSERT(root != NULL, "Root is null");
 
-    TEST_ASSERT_FLOAT_EQ(5.0F, root->multipole[0], 1e-4F);  // M0
-    TEST_ASSERT_FLOAT_EQ(1.0F, root->multipole[1], 1e-4F);  // MX
-    TEST_ASSERT_FLOAT_EQ(0.0F, root->multipole[2], 1e-4F);  // MY
-    TEST_ASSERT_FLOAT_EQ(-1.0F, root->multipole[3], 1e-4F); // MZ
+    float* r_multi = ps_impl_get_multipole(ctx, root);
+    TEST_ASSERT_FLOAT_EQ(5.0F, r_multi[0], 1e-4F);  // M0
+    TEST_ASSERT_FLOAT_EQ(1.0F, r_multi[1], 1e-4F);  // MX
+    TEST_ASSERT_FLOAT_EQ(0.0F, r_multi[2], 1e-4F);  // MY
+    TEST_ASSERT_FLOAT_EQ(-1.0F, r_multi[3], 1e-4F); // MZ
 
     ps_destroy(ctx);
     free(buffer);
@@ -303,7 +305,8 @@ void test_fmm_interaction_pass(void) {
     node_b->z          = 5.0F;
     node_b->half_width = 1.0F;
 
-    node_b->multipole[0] = 1.0F;
+    float* b_multi = ps_impl_get_multipole(ctx, node_b);
+    b_multi[0]     = 1.0F;
 
     ps_impl_fmm_interaction_pass(ctx, node_a, node_b, THETA);
 

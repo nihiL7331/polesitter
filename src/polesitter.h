@@ -340,6 +340,7 @@ ps_result_t ps_destroy(ps_context_t* ctx);
 
 #endif // POLESITTER_H
 
+#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -361,13 +362,13 @@ typedef struct {
 // exactly 64 bytes (1 cache line)
 typedef struct ps_node {
     // physics, 16B
-    float x;
-    float y;
-    float z;
-    float half_width; // needed for M2L
+    float    x;
+    float    y;
+    float    z;
+    float    half_width; // needed for M2L
+    uint32_t _pad[4];
 
-    // FMM payload, 32B (monopole + dipole)
-    float multipole[4];
+    // FMM payload
     union {
         uint32_t children_offs[8];
 
@@ -376,7 +377,7 @@ typedef struct ps_node {
             uint32_t is_leaf;
             uint32_t particle_cnt;
             uint32_t first_particle_idx;
-            uint32_t _pad[5];
+            uint32_t _pad2[5];
         } leaf;
     } data;
 } ps_node_t;
@@ -494,6 +495,7 @@ struct ps_context {
     float      theta;
     ps_arena_t arena;
     float (*local_exp)[4];
+    float (*multipole_exp)[4];
     ps_radix_state_t radix_state;
 
 #ifdef PS_MULTITHREADING
@@ -857,6 +859,11 @@ static inline ps_node_t* ps_impl_alloc_node(ps_context_t* ctx) {
     ctx->local_exp[idx][2] = 0.0F;
     ctx->local_exp[idx][3] = 0.0F;
 
+    ctx->multipole_exp[idx][0] = 0.0F;
+    ctx->multipole_exp[idx][1] = 0.0F;
+    ctx->multipole_exp[idx][2] = 0.0F;
+    ctx->multipole_exp[idx][3] = 0.0F;
+
     return node;
 }
 
@@ -872,6 +879,12 @@ static inline float* ps_impl_get_local(ps_context_t* ctx, ps_node_t* node) {
     uint32_t idx = (uint32_t)(((uint8_t*)node - ctx->arena.mem) / 64);
 
     return ctx->local_exp[idx];
+}
+
+static inline float* ps_impl_get_multipole(ps_context_t* ctx, ps_node_t* node) {
+    uint32_t idx = (uint32_t)(((uint8_t*)node - ctx->arena.mem) / 64);
+
+    return ctx->multipole_exp[idx];
 }
 
 // clear for next frame
@@ -997,10 +1010,11 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         }
 
         // store expansion payload
-        node->multipole[0] = m0;
-        node->multipole[1] = mx;
-        node->multipole[2] = my;
-        node->multipole[3] = mz;
+        float* n_multi = ps_impl_get_multipole(ctx, node);
+        n_multi[0]     = m0;
+        n_multi[1]     = mx;
+        n_multi[2]     = my;
+        n_multi[3]     = mz;
         return;
     }
 
@@ -1025,10 +1039,11 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         float dy = child->y - node->y;
         float dz = child->z - node->z;
 
-        float c_m0 = child->multipole[0];
-        float c_mx = child->multipole[1];
-        float c_my = child->multipole[2];
-        float c_mz = child->multipole[3];
+        float* c_multi = ps_impl_get_multipole(ctx, child);
+        float  c_m0    = c_multi[0];
+        float  c_mx    = c_multi[1];
+        float  c_my    = c_multi[2];
+        float  c_mz    = c_multi[3];
 
         // shift the childs expansion to the parents center and accumulate
         // dipole requires the monopole * dist
@@ -1039,10 +1054,11 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
     }
 
     // store aggregated expansion in parent
-    node->multipole[0] = p_m0;
-    node->multipole[1] = p_mx;
-    node->multipole[2] = p_my;
-    node->multipole[3] = p_mz;
+    float* n_multi = ps_impl_get_multipole(ctx, node);
+    n_multi[0]     = p_m0;
+    n_multi[1]     = p_mx;
+    n_multi[2]     = p_my;
+    n_multi[3]     = p_mz;
 }
 
 // pass 2
@@ -1067,10 +1083,11 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         float inv_r3       = 1.0F / (dist * soft_dist_sq);
         float inv_r5       = inv_r3 / soft_dist_sq;
 
-        float m0 = src->multipole[0];
-        float mx = src->multipole[1];
-        float my = src->multipole[2];
-        float mz = src->multipole[3];
+        float* s_multi = ps_impl_get_multipole(ctx, src);
+        float  m0      = s_multi[0];
+        float  mx      = s_multi[1];
+        float  my      = s_multi[2];
+        float  mz      = s_multi[3];
 
         // monopole contribution to target's local field
         float force_m0_x = m0 * dx * inv_r3;
@@ -1740,7 +1757,7 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg) {
         (float*)(radix_mem + (5 * cfg->max_particles * sizeof(float)));
 
     size_t usable    = cfg->buff_size - arena_start - radix_tmp_size;
-    size_t max_nodes = usable / (sizeof(ps_node_t) + 16);
+    size_t max_nodes = usable / (sizeof(ps_node_t) + 32);
 
     // global arena gets remaining space
     ctx->arena.mem = (uint8_t*)cfg->buff + arena_start;
@@ -1750,6 +1767,7 @@ ps_result_t ps_init(ps_context_t** out_ctx, const ps_config_t* cfg) {
     // clang-format off
 
     ctx->local_exp = (float (*)[4])(ctx->arena.mem + ctx->arena.cap);
+    ctx->multipole_exp = (float (*)[4])((uint8_t*)ctx->local_exp + (max_nodes * 16));
 
     // clang-format on
 
