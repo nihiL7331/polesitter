@@ -1385,9 +1385,74 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         float* t_local = ps_impl_get_local(ctx, node);
         float  field_x = t_local[1];
         float  field_y = t_local[2];
-        float  field_z = t_local[3];
 
         uint32_t i = 0;
+
+#ifdef PS_2D
+
+#if defined(PS_USE_AVX2)
+        // broadcast local bg field to all 8 lanes
+        __m256 f_x_vec = _mm256_set1_ps(field_x);
+        __m256 f_y_vec = _mm256_set1_ps(field_y);
+
+        // process in chunks of 8
+        for (; i + 7 < node->data.leaf.particle_cnt; i += 8) {
+            uint32_t idx = node->data.leaf.first_particle_idx + i;
+
+            // load 8 masses
+            __m256 m_vec = _mm256_loadu_ps(&arrs->mass[idx]);
+
+            // load 8 current forces
+            __m256 cur_fx = _mm256_loadu_ps(&arrs->fx[idx]);
+            __m256 cur_fy = _mm256_loadu_ps(&arrs->fy[idx]);
+
+            // F_xy += mass * field_xyz
+            cur_fx = _mm256_add_ps(cur_fx, _mm256_mul_ps(m_vec, f_x_vec));
+            cur_fy = _mm256_add_ps(cur_fy, _mm256_mul_ps(m_vec, f_y_vec));
+
+            // store 8 updated forces back to mem
+            _mm256_storeu_ps(&arrs->fx[idx], cur_fx);
+            _mm256_storeu_ps(&arrs->fy[idx], cur_fy);
+        }
+#elif defined(PS_USE_NEON)
+        // broadcast local bg field to all 4 lanes
+        float32x4_t f_x_vec = vdupq_n_f32(field_x);
+        float32x4_t f_y_vec = vdupq_n_f32(field_y);
+
+        // process in chunks of 4
+        for (; i + 3 < node->data.leaf.particle_cnt; i += 4) {
+            uint32_t idx = node->data.leaf.first_particle_idx + i;
+
+            // load 4 masses
+            float32x4_t m_vec = vld1q_f32(&arrs->mass[idx]);
+
+            // load 4 current forces
+            float32x4_t cur_fx = vld1q_f32(&arrs->fx[idx]);
+            float32x4_t cur_fy = vld1q_f32(&arrs->fy[idx]);
+
+            // F_xyz += mass * field_xyz
+            cur_fx = vmlaq_f32(cur_fx, m_vec, f_x_vec);
+            cur_fy = vmlaq_f32(cur_fy, m_vec, f_y_vec);
+
+            // store 4 updated forces back to mem
+            vst1q_f32(&arrs->fx[idx], cur_fx);
+            vst1q_f32(&arrs->fy[idx], cur_fy);
+        }
+#endif
+
+        // fallback for the remainder
+        for (; i < node->data.leaf.particle_cnt; ++i) {
+            uint32_t idx  = node->data.leaf.first_particle_idx + i;
+            float    mass = arrs->mass[idx];
+
+            // F = m * a
+            arrs->fx[idx] += mass * field_x;
+            arrs->fy[idx] += mass * field_y;
+        }
+
+#else // PS_3D
+
+        float field_z = t_local[3];
 
 #if defined(PS_USE_AVX2)
         // broadcast local bg field to all 8 lanes
@@ -1458,6 +1523,8 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             arrs->fz[idx] += mass * field_z;
         }
 
+#endif // PS_3D
+
         return;
     }
 
@@ -1473,7 +1540,9 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         const float* node_local  = ps_impl_get_local(ctx, node);
         child_local[1] += node_local[1];
         child_local[2] += node_local[2];
+#ifndef PS_2D
         child_local[3] += node_local[3];
+#endif // PS_3D
 
         ps_impl_fmm_downward_pass(ctx, child, arrs);
     }
@@ -2692,21 +2761,22 @@ ps_result_t ps_destroy(ps_context_t* ctx) {
 
     Copyright (c) 2026 Patryk Pujanek
 
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to
-   deal in the Software without restriction, including without limitation the
-   rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-   sell copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
+    Permission is hereby granted, free of charge, to any person obtaining a
+   copy of this software and associated documentation files (the
+   "Software"), to deal in the Software without restriction, including
+   without limitation the rights to use, copy, modify, merge, publish,
+   distribute, sublicense, and/or sell copies of the Software, and to permit
+   persons to whom the Software is furnished to do so, subject to the
+   following conditions:
 
-    The above copyright notice and this permission notice shall be included in
-   all copies or substantial portions of the Software.
+    The above copyright notice and this permission notice shall be included
+   in all copies or substantial portions of the Software.
 
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-   IN THE SOFTWARE.
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+   USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
