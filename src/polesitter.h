@@ -931,16 +931,12 @@ static inline ps_node_t* ps_impl_alloc_node(ps_context_t* ctx) {
 
     memset(node, 0, 64);
 
-    uint32_t idx           = (uint32_t)(old_off / 64);
-    ctx->local_exp[idx][0] = 0.0F;
-    ctx->local_exp[idx][1] = 0.0F;
-    ctx->local_exp[idx][2] = 0.0F;
-    ctx->local_exp[idx][3] = 0.0F;
+    uint32_t idx = (uint32_t)(old_off / 64);
 
-    ctx->multipole_exp[idx][0] = 0.0F;
-    ctx->multipole_exp[idx][1] = 0.0F;
-    ctx->multipole_exp[idx][2] = 0.0F;
-    ctx->multipole_exp[idx][3] = 0.0F;
+    for (int i = 0; i < PS_EXPANSION_TERMS; ++i) {
+        ctx->local_exp[idx][i]     = 0.0F;
+        ctx->multipole_exp[idx][i] = 0.0F;
+    }
 
     return node;
 }
