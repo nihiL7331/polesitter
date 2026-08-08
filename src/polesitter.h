@@ -349,7 +349,6 @@ ps_result_t ps_destroy(ps_context_t* ctx);
 
 #endif // POLESITTER_H
 
-#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -2093,8 +2092,10 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx,
     rs->id_src           = arrs->id;
     rs->x_src            = arrs->x;
     rs->y_src            = arrs->y;
-    rs->z_src            = arrs->z;
-    rs->mass_src         = arrs->mass;
+#ifndef PS_2D
+    rs->z_src = arrs->z;
+#endif // PS_3D
+    rs->mass_src = arrs->mass;
 
     // how many chunks split into
 #ifdef PS_MULTITHREADING
@@ -2172,7 +2173,9 @@ static ps_result_t ps_impl_sort_particles(ps_context_t* ctx,
         PS_IMPL_SWAP_PTR(uint32_t*, rs->id_src, rs->id_dst);
         PS_IMPL_SWAP_PTR(float*, rs->x_src, rs->x_dst);
         PS_IMPL_SWAP_PTR(float*, rs->y_src, rs->y_dst);
+#ifndef PS_2D
         PS_IMPL_SWAP_PTR(float*, rs->z_src, rs->z_dst);
+#endif // PS_3D
         PS_IMPL_SWAP_PTR(float*, rs->mass_src, rs->mass_dst);
     }
 
@@ -2723,7 +2726,6 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
     for (; i < arrs->cnt; i++) {
         int mx = (int)(((arrs->x[i] - min_b) / range) * 65535.0F);
         int my = (int)(((arrs->y[i] - min_b) / range) * 65535.0F);
-        int mz = (int)(((arrs->z[i] - min_b) / range) * 65535.0F);
 
         if (mx < 0) {
             mx = 0;
