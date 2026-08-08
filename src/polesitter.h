@@ -1002,7 +1002,7 @@ static void ps_impl_build_tree(ps_context_t* ctx, uint32_t thrd_id,
     size_t  curr_start = start_idx;
 
     // subdivide into 8 octants
-    for (uint32_t oct = 0; oct < 8; ++oct) {
+    for (uint32_t oct = 0; oct < PS_OCTANTS; ++oct) {
         // find where this octnat ends in the sorted arr
         size_t oct_end = ps_impl_find_split(morton_codes, curr_start, end_idx,
                                             shift, oct + 1);
@@ -1093,7 +1093,7 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
     float p_my = 0.0F;
     float p_mz = 0.0F;
 
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < PS_OCTANTS; ++i) {
         ps_node_t* child = ps_impl_get_node(ctx, node->data.children_offs[i]);
         if (!child) {
             continue;
@@ -1188,7 +1188,7 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
 
     if (target->data.leaf.is_leaf & 1) {
         // target is as small as possible, open the src
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < PS_OCTANTS; ++i) {
             ps_node_t* src_child =
                 ps_impl_get_node(ctx, src->data.children_offs[i]);
             if (!src_child) {
@@ -1199,7 +1199,7 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         }
     } else if (src->data.leaf.is_leaf & 1) {
         // src is as small as possible, open the target
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < PS_OCTANTS; ++i) {
             ps_node_t* target_child =
                 ps_impl_get_node(ctx, target->data.children_offs[i]);
             if (!target_child) {
@@ -1212,7 +1212,7 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         // subdivide larger to ensure symmetric depth traversal
         if (src->half_width > target->half_width * 1.01F) {
             // source is larger, subdivide source only
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < PS_OCTANTS; ++i) {
                 ps_node_t* src_child =
                     ps_impl_get_node(ctx, src->data.children_offs[i]);
                 if (!src_child) {
@@ -1223,7 +1223,7 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
             }
         } else if (target->half_width > src->half_width * 1.01F) {
             // target is larger, subdivide target only
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < PS_OCTANTS; ++i) {
                 ps_node_t* target_child =
                     ps_impl_get_node(ctx, target->data.children_offs[i]);
                 if (!target_child) {
@@ -1234,14 +1234,14 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
             }
         } else {
             // same size, subdivide both and pair permutations
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < PS_OCTANTS; ++i) {
                 ps_node_t* target_child =
                     ps_impl_get_node(ctx, target->data.children_offs[i]);
                 if (!target_child) {
                     continue;
                 }
 
-                for (int j = 0; j < 8; ++j) {
+                for (int j = 0; j < PS_OCTANTS; ++j) {
                     ps_node_t* src_child =
                         ps_impl_get_node(ctx, src->data.children_offs[j]);
                     if (!src_child) {
@@ -1346,7 +1346,7 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         return;
     }
 
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < PS_OCTANTS; ++i) {
         ps_node_t* child = ps_impl_get_node(ctx, node->data.children_offs[i]);
         if (!child) {
             continue;
@@ -1564,7 +1564,7 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
 
     // otherwise subdivide and recurse (like in m2l)
     if (target->data.leaf.is_leaf & 1) {
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < PS_OCTANTS; ++i) {
             ps_node_t* src_child =
                 ps_impl_get_node(ctx, src->data.children_offs[i]);
             if (!src_child) {
@@ -1574,7 +1574,7 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             ps_impl_fmm_p2p_pass(ctx, target, src_child, arrs, theta);
         }
     } else if (src->data.leaf.is_leaf & 1) {
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < PS_OCTANTS; ++i) {
             ps_node_t* target_child =
                 ps_impl_get_node(ctx, target->data.children_offs[i]);
             if (!target_child) {
@@ -1586,7 +1586,7 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
     } else {
         if (src->half_width > target->half_width * 1.01F) {
             // source is larger, subdivice source only
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < PS_OCTANTS; ++i) {
                 ps_node_t* src_child =
                     ps_impl_get_node(ctx, src->data.children_offs[i]);
                 if (!src_child) {
@@ -1597,7 +1597,7 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             }
         } else if (target->half_width > src->half_width * 1.01F) {
             // target is larger, subdivide target only
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < PS_OCTANTS; ++i) {
                 ps_node_t* target_child =
                     ps_impl_get_node(ctx, target->data.children_offs[i]);
                 if (!target_child) {
@@ -1608,14 +1608,14 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
             }
         } else {
             // same size, subdivide both
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < PS_OCTANTS; ++i) {
                 ps_node_t* target_child =
                     ps_impl_get_node(ctx, target->data.children_offs[i]);
                 if (!target_child) {
                     continue;
                 }
 
-                for (int j = 0; j < 8; ++j) {
+                for (int j = 0; j < PS_OCTANTS; ++j) {
                     ps_node_t* src_child =
                         ps_impl_get_node(ctx, src->data.children_offs[j]);
                     if (!src_child) {
@@ -1926,7 +1926,7 @@ static void ps_impl_dispatch_fmm(ps_context_t* ctx, ps_job_type_t job_type,
     }
 
     // otherwise keep traversing down
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < PS_OCTANTS; ++i) {
         ps_node_t* target_child =
             ps_impl_get_node(ctx, target->data.children_offs[i]);
         if (!target_child) {
@@ -1956,7 +1956,7 @@ static void ps_impl_dispatch_downward(ps_context_t* ctx, ps_node_t* target,
     }
 
     // above target depth, manually push local field down before dispatch
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < PS_OCTANTS; ++i) {
         ps_node_t* child = ps_impl_get_node(ctx, target->data.children_offs[i]);
         if (!child) {
             continue;
