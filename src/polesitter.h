@@ -2407,11 +2407,9 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             // accumulate the spatial gradients
             f_x = vmlaq_f32(f_x, L_xx, dx);
             f_x = vmlaq_f32(f_x, L_xy, dy);
-            f_x = vmlaq_f32(f_x, L_xz, dz);
 
             f_y = vmlaq_f32(f_y, L_xy, dx);
             f_y = vmlaq_f32(f_y, L_yy, dy);
-            f_y = vmlaq_f32(f_y, L_yz, dz);
 
 #endif // PS_ORDER >= 2
 #if PS_ORDER >= 3
