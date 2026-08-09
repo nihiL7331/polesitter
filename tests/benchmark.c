@@ -1,4 +1,4 @@
-// NOLINTNEXTLINE(cert-dc137-c,cert-dc151-cpp)
+// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dc137-c,cert-dc151-cpp)
 #define _POSIX_C_SOURCE 199309L
 #include <math.h>
 #include <stdio.h>
