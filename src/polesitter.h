@@ -11,6 +11,10 @@
 
    Use #define PS_2D to toggle 2D mode.
 
+   Use #define PS_ORDER 1-3 to pick maximum order of Taylor expansions used in solver.
+        (higher = worse performance, better accuracy)
+        (default = 2)
+
     // i.e. it should look like this:
     #include ...
     #include ...
