@@ -85,7 +85,6 @@ void test_arena_allocator(void) {
     TEST_ASSERT(res == PS_OK, "Failed to initialize context");
     TEST_ASSERT(ctx != NULL, "Context pointer is null");
 
-    printf("%lu == %lu - %lu - 128\n", ctx->arena.cap, total_mem, ctx_size);
     TEST_ASSERT(ctx->arena.cap == total_mem - ctx_size - 256,
                 "Arena capacity mismatch");
     TEST_ASSERT(ctx->arena.off == 0, "Arena offset should start at 0");
