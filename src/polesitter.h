@@ -2356,15 +2356,15 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
 
 #elif defined(PS_USE_NEON)
 
-        // broadcast node center
-        float32x4_t n_x = vdupq_n_f32(node->x);
-        float32x4_t n_y = vdupq_n_f32(node->y);
-
         // broadcast local field base values
         float32x4_t L_x = vdupq_n_f32(t_local[M_X]);
         float32x4_t L_y = vdupq_n_f32(t_local[M_Y]);
 
 #if PS_ORDER >= 2
+
+        // broadcast node center
+        float32x4_t n_x = vdupq_n_f32(node->x);
+        float32x4_t n_y = vdupq_n_f32(node->y);
 
         // broadcast gradient coeffs
         float32x4_t L_xx = vdupq_n_f32(t_local[M_XX]);
@@ -2629,17 +2629,17 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
 
 #elif defined(PS_USE_NEON)
 
-        // broadcast node center
-        float32x4_t n_x = vdupq_n_f32(node->x);
-        float32x4_t n_y = vdupq_n_f32(node->y);
-        float32x4_t n_z = vdupq_n_f32(node->z);
-
         // broadcast local field base values
         float32x4_t L_x = vdupq_n_f32(t_local[M_X]);
         float32x4_t L_y = vdupq_n_f32(t_local[M_Y]);
         float32x4_t L_z = vdupq_n_f32(t_local[M_Z]);
 
 #if PS_ORDER >= 2
+
+        // broadcast node center
+        float32x4_t n_x = vdupq_n_f32(node->x);
+        float32x4_t n_y = vdupq_n_f32(node->y);
+        float32x4_t n_z = vdupq_n_f32(node->z);
 
         // broadcast gradient coeffs
         float32x4_t L_xx = vdupq_n_f32(t_local[M_XX]);
