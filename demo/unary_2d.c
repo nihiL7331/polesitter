@@ -13,7 +13,7 @@
 #define BLACKHOLE_MASS     7000.0F
 #define ARENA_SIZE         (1024ULL * 1024ULL * 512ULL)
 #define MAX_EXPECTED_SPEED 750
-#define THETA              3.4641F // sqrt of 12
+#define THETA              2.0F
 
 float    vx[PARTICLE_COUNT]           = {0};
 float    vy[PARTICLE_COUNT]           = {0};

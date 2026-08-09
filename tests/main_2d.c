@@ -140,7 +140,7 @@ void test_quadtree_insertion(void) {
 
 void test_radix_sort_2d(void) {
     size_t ctx_size  = ps_impl_align_forward(sizeof(ps_context_t), 64);
-    size_t total_mem = ctx_size + (1024ULL * 1024);
+    size_t total_mem = ctx_size + (8ULL * 1024 * 1024);
 
     void* buffer = ALIGNED_MALLOC(total_mem, 64);
     TEST_ASSERT(buffer != NULL, "Test buffer allocation failed");

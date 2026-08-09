@@ -1,6 +1,6 @@
 // clang-format off
 /*-
-    polesitter - v2.0 - Fast Multipole Method (FFM) N-body solver written in C99
+    polesitter - v2.2 - Fast Multipole Method (FFM) N-body solver written in C99
 
     Do this:
         #define POLESITTER_IMPLEMENTATION
@@ -351,7 +351,6 @@ ps_result_t ps_destroy(ps_context_t* ctx);
 
 #endif // POLESITTER_H
 
-#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -435,48 +434,96 @@ typedef struct ps_node {
 #ifdef PS_2D
 
 #define PS_OCTANTS 4
+
 #if PS_ORDER == 1
+
 #define PS_EXPANSION_TERMS 4
+#define M_0                0
+#define M_X                1
+#define M_Y                2
+
 #elif PS_ORDER == 2
+
 #define PS_EXPANSION_TERMS 10
+#define M_0                0
+#define M_X                1
+#define M_Y                2
+#define M_XX               3
+#define M_YY               4
+#define M_XY               5
+
 #elif PS_ORDER == 3
+
 #define PS_EXPANSION_TERMS 20
+#define M_0                0
+#define M_X                1
+#define M_Y                2
+#define M_XX               3
+#define M_YY               4
+#define M_XY               5
+#define M_XXX              6
+#define M_YYY              7
+#define M_XXY              8
+#define M_XYY              9
+
 #endif
 #define PS_MAX_DEPTH   16  // 16b = 65536 (2^16) leaf nodes
 #define PS_OCTANT_MASK 0x3 // 2 bits
 
-// tensor indices
-#define M_0  0
-#define M_X  1
-#define M_Y  2
-#define M_XX 3
-#define M_YY 4
-#define M_XY 5
-
 #else // PS_3D
 
 #define PS_OCTANTS 8
+
 #if PS_ORDER == 1
+
 #define PS_EXPANSION_TERMS 4
+#define M_0                0
+#define M_X                1
+#define M_Y                2
+#define M_Z                3
+
 #elif PS_ORDER == 2
+
 #define PS_EXPANSION_TERMS 10
+#define M_0                0
+#define M_X                1
+#define M_Y                2
+#define M_Z                3
+#define M_XX               4
+#define M_YY               5
+#define M_ZZ               6
+#define M_XY               7
+#define M_XZ               8
+#define M_YZ               9
+
 #elif PS_ORDER == 3
+
 #define PS_EXPANSION_TERMS 20
+#define M_0                0
+#define M_X                1
+#define M_Y                2
+#define M_Z                3
+#define M_XX               4
+#define M_YY               5
+#define M_ZZ               6
+#define M_XY               7
+#define M_XZ               8
+#define M_YZ               9
+#define M_XXX              10
+#define M_YYY              11
+#define M_ZZZ              12
+#define M_XXY              13
+#define M_XXZ              14
+#define M_XYY              15
+#define M_YYZ              16
+#define M_XZZ              17
+#define M_YZZ              18
+#define M_XYZ              19
+
 #endif
+
 #define PS_MAX_DEPTH   10  // 10b = 1024 (2^10) leaf nodes
 #define PS_OCTANT_MASK 0x7 // 3 bits
-
-// tensor indices
-#define M_0            0
-#define M_X            1
-#define M_Y            2
-#define M_Z            3
-#define M_XX           4
-#define M_YY           5
-#define M_ZZ           6
-#define M_XY           7
-#define M_XZ           8
-#define M_YZ           9
 
 #endif // PS_3D
 
@@ -1127,8 +1174,16 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         float mx = 0.0F; // dipole x (mass moment)
         float my = 0.0F; // dipole y
 #if PS_ORDER >= 2
-        float mxx = 0.0F, myy = 0.0F, mxy = 0.0F;
+        float mxx = 0.0F;
+        float myy = 0.0F;
+        float mxy = 0.0F;
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+        float mxxx = 0.0F;
+        float myyy = 0.0F;
+        float mxxy = 0.0F;
+        float mxyy = 0.0F;
+#endif // PS_ORDER >= 3
 
         for (uint32_t i = 0; i < node->data.leaf.particle_cnt; ++i) {
             uint32_t idx  = node->data.leaf.first_particle_idx + i;
@@ -1142,12 +1197,25 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
             // mass x dist
             mx += mass * dx;
             my += mass * dy;
+
 #if PS_ORDER >= 2
+
             // mass x dist^2
             mxx += mass * dx * dx;
             myy += mass * dy * dy;
             mxy += mass * dx * dy;
+
 #endif // PS_ORDER >= 2
+
+#if PS_ORDER >= 3
+
+            // mass x dist^3
+            mxxx += mass * dx * dx * dx;
+            myyy += mass * dy * dy * dy;
+            mxxy += mass * dx * dx * dy;
+            mxyy += mass * dx * dy * dy;
+
+#endif // PS_ORDER >= 3
         }
 
         // store expansion payload
@@ -1159,6 +1227,12 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         n_multi[M_YY] = myy;
         n_multi[M_XY] = mxy;
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+        n_multi[M_XXX] = mxxx;
+        n_multi[M_YYY] = myyy;
+        n_multi[M_XXY] = mxxy;
+        n_multi[M_XYY] = mxyy;
+#endif // PS_ORDER >= 3
 
 #else // PS_3D
 
@@ -1167,9 +1241,25 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         float my = 0.0F; // dipole y
         float mz = 0.0F; // dipole z
 #if PS_ORDER >= 2
-        float mxx = 0.0F, myy = 0.0F, mzz = 0.0F;
-        float mxy = 0.0F, mxz = 0.0F, myz = 0.0F;
+        float mxx = 0.0F;
+        float myy = 0.0F;
+        float mzz = 0.0F;
+        float mxy = 0.0F;
+        float mxz = 0.0F;
+        float myz = 0.0F;
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+        float mxxx = 0.0F;
+        float myyy = 0.0F;
+        float mzzz = 0.0F;
+        float mxxy = 0.0F;
+        float mxxz = 0.0F;
+        float mxyy = 0.0F;
+        float myyz = 0.0F;
+        float mxzz = 0.0F;
+        float myzz = 0.0F;
+        float mxyz = 0.0F;
+#endif // PS_ORDER >= 3
 
         for (uint32_t i = 0; i < node->data.leaf.particle_cnt; ++i) {
             uint32_t idx  = node->data.leaf.first_particle_idx + i;
@@ -1194,6 +1284,19 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
             mxz += mass * dx * dz;
             myz += mass * dy * dz;
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+            // mass x dist^3
+            mxxx += mass * dx * dx * dx;
+            myyy += mass * dy * dy * dy;
+            mzzz += mass * dz * dz * dz;
+            mxxy += mass * dx * dx * dy;
+            mxxz += mass * dx * dx * dz;
+            mxyy += mass * dx * dy * dy;
+            myyz += mass * dy * dy * dz;
+            mxzz += mass * dx * dz * dz;
+            myzz += mass * dy * dz * dz;
+            mxyz += mass * dx * dy * dz;
+#endif // PS_ORDER >= 3
         }
 
         // store expansion payload
@@ -1209,6 +1312,18 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         n_multi[M_XZ] = mxz;
         n_multi[M_YZ] = myz;
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+        n_multi[M_XXX] = mxxx;
+        n_multi[M_YYY] = myyy;
+        n_multi[M_ZZZ] = mzzz;
+        n_multi[M_XXY] = mxxy;
+        n_multi[M_XXZ] = mxxz;
+        n_multi[M_XYY] = mxyy;
+        n_multi[M_YYZ] = myyz;
+        n_multi[M_XZZ] = mxzz;
+        n_multi[M_YZZ] = myzz;
+        n_multi[M_XYZ] = mxyz;
+#endif // PS_ORDER >= 3
 
 #endif // PS_3D
 
@@ -1223,8 +1338,16 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
     float p_mx = 0.0F;
     float p_my = 0.0F;
 #if PS_ORDER >= 2
-    float p_mxx = 0.0F, p_myy = 0.0F, p_mxy = 0.0F;
+    float p_mxx = 0.0F;
+    float p_myy = 0.0F;
+    float p_mxy = 0.0F;
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+    float p_mxxx = 0.0F;
+    float p_myyy = 0.0F;
+    float p_mxxy = 0.0F;
+    float p_mxyy = 0.0F;
+#endif // PS_ORDER >= 3
 
     for (int i = 0; i < PS_OCTANTS; ++i) {
         ps_node_t* child = ps_impl_get_node(ctx, node->data.children_offs[i]);
@@ -1249,19 +1372,83 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         float c_myy = c_multi[M_YY];
         float c_mxy = c_multi[M_XY];
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+        float c_mxxx = c_multi[M_XXX];
+        float c_myyy = c_multi[M_YYY];
+        float c_mxxy = c_multi[M_XXY];
+        float c_mxyy = c_multi[M_XYY];
+#endif // PS_ORDER >= 3
 
         // shift the childs expansion to the parents center and accumulate
         // dipole requires the monopole * dist
         p_m0 += c_m0;
-        p_mx += c_mx + (c_m0 * dx);
-        p_my += c_my + (c_m0 * dy);
+
+        p_mx += c_mx;
+        p_mx += c_m0 * dx;
+
+        p_my += c_my;
+        p_my += c_m0 * dy;
+
 #if PS_ORDER >= 2
+
         // for p=2 binomial expansion:
-        // (x + d_x)^2 = x^2 + 2x d_x + d_x^2
-        p_mxx += c_mxx + (2.0F * c_mx * dx) + (c_m0 * dx * dx);
-        p_myy += c_myy + (2.0F * c_my * dy) + (c_m0 * dy * dy);
-        p_mxy += c_mxy + (c_mx * dy) + (c_my * dx) + (c_m0 * dx * dy);
+        // pure axes:   (x + d_x)^2 = x^2 + 2x d_x + d_x^2
+        // cross terms: (x + d_x)(y + d_y) = xy + x d_y + y d_x + d_x d_y
+        p_mxx += c_mxx;
+        p_mxx += 2.0F * c_mx * dx;
+        p_mxx += c_m0 * dx * dx;
+
+        p_myy += c_myy;
+        p_myy += 2.0F * c_my * dy;
+        p_myy += c_m0 * dy * dy;
+
+        p_mxy += c_mxy;
+        p_mxy += c_mx * dy;
+        p_mxy += c_mx * dx;
+        p_mxy += c_m0 * dx * dy;
+
 #endif // PS_ORDER >= 2
+
+#if PS_ORDER >= 3
+
+        // for p=3 binomial expansion:
+        // pure axes: (x + d_x)^3 = x^3 + 3x^2 d_x + 3x d_x^2 + d_x^3
+        // cross terms:
+        // (x + d_x)^2 (y + d_y) =
+        // x^2 y +
+        // x^2 d_y +
+        // 2 xy d_x +
+        // 2 x d_x d_y +
+        // d_x^2 +
+        // d_x^2 d_y
+        float dx2 = dx * dx;
+        float dy2 = dy * dy;
+
+        p_mxxx += c_mxxx;
+        p_mxxx += 3.0F * c_mxx * dx;
+        p_mxxx += 3.0F * c_mx * dx2;
+        p_mxxx += c_m0 * dx2 * dx;
+
+        p_myyy += c_myyy;
+        p_myyy += 3.0F * c_myy * dy;
+        p_myyy += 3.0F * c_my * dy2;
+        p_myyy += c_m0 * dy2 * dy;
+
+        p_mxxy += c_mxxy;
+        p_mxxy += c_mxx * dy;
+        p_mxxy += 2.0F * c_mxy * dx;
+        p_mxxy += c_my * dx2;
+        p_mxxy += 2.0F * c_mx * dx * dy;
+        p_mxxy += c_m0 * dx2 * dy;
+
+        p_mxyy += c_mxyy;
+        p_mxyy += c_myy * dx;
+        p_mxyy += 2.0F * c_mxy * dy;
+        p_mxyy += c_mx * dy2;
+        p_mxyy += 2.0F * c_my * dx * dy;
+        p_mxyy += c_m0 * dx * dy2;
+
+#endif // PS_ORDER >= 3
     }
 
     // store aggregated expansion in parent
@@ -1274,6 +1461,12 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
     n_multi[M_YY] = p_myy;
     n_multi[M_XY] = p_mxy;
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+    n_multi[M_XXX] = p_mxxx;
+    n_multi[M_YYY] = p_myyy;
+    n_multi[M_XXY] = p_mxxy;
+    n_multi[M_XYY] = p_mxyy;
+#endif // PS_ORDER >= 3
 
 #else // PS_3D
 
@@ -1282,9 +1475,25 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
     float p_my = 0.0F;
     float p_mz = 0.0F;
 #if PS_ORDER >= 2
-    float p_mxx = 0.0F, p_myy = 0.0F, p_mzz = 0.0F;
-    float p_mxy = 0.0F, p_mxz = 0.0F, p_myz = 0.0F;
+    float p_mxx = 0.0F;
+    float p_myy = 0.0F;
+    float p_mzz = 0.0F;
+    float p_mxy = 0.0F;
+    float p_mxz = 0.0F;
+    float p_myz = 0.0F;
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+    float p_mxxx = 0.0F;
+    float p_myyy = 0.0F;
+    float p_mzzz = 0.0F;
+    float p_mxxy = 0.0F;
+    float p_mxxz = 0.0F;
+    float p_mxyy = 0.0F;
+    float p_myyz = 0.0F;
+    float p_mxzz = 0.0F;
+    float p_myzz = 0.0F;
+    float p_mxyz = 0.0F;
+#endif // PS_ORDER >= 3
 
     for (int i = 0; i < PS_OCTANTS; ++i) {
         ps_node_t* child = ps_impl_get_node(ctx, node->data.children_offs[i]);
@@ -1314,24 +1523,148 @@ static void ps_impl_fmm_upward_pass(ps_context_t* ctx, ps_node_t* node,
         float c_mxz = c_multi[M_XZ];
         float c_myz = c_multi[M_YZ];
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+        float c_mxxx = c_multi[M_XXX];
+        float c_myyy = c_multi[M_YYY];
+        float c_mzzz = c_multi[M_ZZZ];
+        float c_mxxy = c_multi[M_XXY];
+        float c_mxxz = c_multi[M_XXZ];
+        float c_mxyy = c_multi[M_XYY];
+        float c_myyz = c_multi[M_YYZ];
+        float c_mxzz = c_multi[M_XZZ];
+        float c_myzz = c_multi[M_YZZ];
+        float c_mxyz = c_multi[M_XYZ];
+#endif // PS_ORDER >= 3
 
         // shift the childs expansion to the parents center and accumulate
         // dipole requires the monopole * dist
         p_m0 += c_m0;
-        p_mx += c_mx + (c_m0 * dx);
-        p_my += c_my + (c_m0 * dy);
-        p_mz += c_mz + (c_m0 * dz);
-#if PS_ORDER >= 2
-        // for p=2 binomial expansion:
-        // (x + d_x)^2 = x^2 + 2x d_x + d_x^2
-        p_mxx += c_mxx + (2.0F * c_mx * dx) + (c_m0 * dx * dx);
-        p_myy += c_myy + (2.0F * c_my * dy) + (c_m0 * dy * dy);
-        p_mzz += c_mzz + (2.0F * c_mz * dz) + (c_m0 * dz * dz);
 
-        p_mxy += c_mxy + (c_mx * dy) + (c_my * dx) + (c_m0 * dx * dy);
-        p_mxz += c_mxz + (c_mx * dz) + (c_mz * dx) + (c_m0 * dx * dz);
-        p_myz += c_myz + (c_my * dz) + (c_mz * dy) + (c_m0 * dy * dz);
+        p_mx += c_mx;
+        p_mx += c_m0 * dx;
+
+        p_my += c_my;
+        p_my += c_m0 * dy;
+
+        p_mz += c_mz;
+        p_mz += c_m0 * dz;
+
+#if PS_ORDER >= 2
+
+        // for p=2 binomial expansion:
+        // pure axes:   (x + d_x)^2 = x^2 + 2x d_x + d_x^2
+        // cross terms: (x+d_x)(y+d_y) = xy + x d_y + y d_x + d_x d_y
+        p_mxx += c_mxx;
+        p_mxx += 2.0F * c_mx * dx;
+        p_mxx += c_m0 * dx * dx;
+
+        p_myy += c_myy;
+        p_myy += 2.0F * c_my * dy;
+        p_myy += c_m0 * dy * dy;
+
+        p_mzz += c_mzz;
+        p_mzz += 2.0F * c_mz * dz;
+        p_mzz += c_m0 * dz * dz;
+
+        p_mxy += c_mxy;
+        p_mxy += c_mx * dy;
+        p_mxy += c_my * dx;
+        p_mxy += c_m0 * dx * dy;
+
+        p_mxz += c_mxz;
+        p_mxz += c_mx * dz;
+        p_mxz += c_mz * dx;
+        p_mxz += c_m0 * dx * dz;
+
+        p_myz += c_myz;
+        p_myz += c_my * dz;
+        p_myz += c_mz * dy;
+        p_myz += c_m0 * dy * dz;
+
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        // for p=3 binomial expansion:
+        // pure axes: (x + d_x)^3 = x^3 + 3x^2 d_x + 3x d_x^2 + d_x^3
+        // cross terms:
+        // (x + d_x)^2 (y + d_y) =
+        // x^2 y +
+        // x^2 d_y +
+        // 2 xy d_x +
+        // 2 x d_x d_y +
+        // d_x^2 +
+        // d_x^2 d_y
+        float dx2 = dx * dx;
+        float dy2 = dy * dy;
+        float dz2 = dz * dz;
+
+        p_mxxx += c_mxxx;
+        p_mxxx += 3.0F * c_mxx * dx;
+        p_mxxx += 3.0F * c_mx * dx2;
+        p_mxxx += c_m0 * dx2 * dx;
+
+        p_myyy += c_myyy;
+        p_myyy += 3.0F * c_myy * dy;
+        p_myyy += 3.0F * c_my * dy2;
+        p_myyy += c_m0 * dy2 * dy;
+
+        p_mzzz += c_mzzz;
+        p_mzzz += 3.0F * c_mzz * dz;
+        p_mzzz += 3.0F * c_mz * dz2;
+        p_mzzz += c_m0 * dz2 * dz;
+
+        p_mxxy += c_mxxy;
+        p_mxxy += c_mxx * dy;
+        p_mxxy += 2.0F * c_mxy * dx;
+        p_mxxy += c_my * dx2;
+        p_mxxy += 2.0F * c_mx * dx * dy;
+        p_mxxy += c_m0 * dx2 * dy;
+
+        p_mxxz += c_mxxz;
+        p_mxxz += c_mxx * dz;
+        p_mxxz += 2.0F * c_mxz * dx;
+        p_mxxz += c_mz * dx2;
+        p_mxxz += 2.0F * c_mx * dx * dz;
+        p_mxxz += c_m0 * dx2 * dz;
+
+        p_mxyy += c_mxyy;
+        p_mxyy += c_myy * dx;
+        p_mxyy += 2.0F * c_mxy * dy;
+        p_mxyy += c_mx * dy2;
+        p_mxyy += 2.0F * c_my * dx * dy;
+        p_mxyy += c_m0 * dx * dy2;
+
+        p_myyz += c_myyz;
+        p_myyz += c_myy * dz;
+        p_myyz += 2.0F * c_myz * dy;
+        p_myyz += c_mz * dy2;
+        p_myyz += 2.0F * c_my * dy * dz;
+        p_myyz += c_m0 * dy2 * dz;
+
+        p_mxzz += c_mxzz;
+        p_mxzz += c_mzz * dx;
+        p_mxzz += 2.0F * c_mxz * dz;
+        p_mxzz += c_mx * dz2;
+        p_mxzz += 2.0F * c_mz * dx * dz;
+        p_mxzz += c_m0 * dx * dz2;
+
+        p_myzz += c_myzz;
+        p_myzz += c_mzz * dy;
+        p_myzz += 2.0F * c_myz * dz;
+        p_myzz += c_my * dz2;
+        p_myzz += 2.0F * c_mz * dy * dz;
+        p_myzz += c_m0 * dy * dz2;
+
+        p_mxyz += c_mxyz;
+        p_mxyz += c_mxy * dz;
+        p_mxyz += c_mxz * dy;
+        p_mxyz += c_myz * dx;
+        p_mxyz += c_mx * dy * dz;
+        p_mxyz += c_my * dx * dz;
+        p_mxyz += c_mz * dx * dy;
+        p_mxyz += c_m0 * dx * dy * dz;
+
+#endif // PS_ORDER >= 3
     }
 
     // store aggregated expansion in parent
@@ -1383,27 +1716,50 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         float inv_r  = 1.0F / sqrtf(r2);
         float inv_r3 = inv_r * inv_r * inv_r;
 
-        // 1st order
+        // 1st order spatial derivatives
         float D_x = dx * inv_r3;
         float D_y = dy * inv_r3;
 
-        // 2nd order
         float inv_r5 = inv_r3 * inv_r * inv_r;
-        float D_xx   = ((3.0F * dx * dx) - r2) * inv_r5;
-        float D_yy   = ((3.0F * dy * dy) - r2) * inv_r5;
-        float D_xy   = (3.0F * dx * dy) * inv_r5;
+
+        // 2nd order spatial derivatives
+        float D_xx = ((3.0F * dx * dx) - r2) * inv_r5;
+        float D_yy = ((3.0F * dy * dy) - r2) * inv_r5;
+        float D_xy = (3.0F * dx * dy) * inv_r5;
 
 #if PS_ORDER >= 2
 
-        // 3rd order
         float inv_r7   = inv_r5 * inv_r * inv_r;
         float inv_r7_3 = 3.0F * inv_r7;
-        float D_xxx    = inv_r7_3 * dx * ((5.0F * dx * dx) - (3.0F * r2));
-        float D_yyy    = inv_r7_3 * dy * ((5.0F * dy * dy) - (3.0F * r2));
-        float D_xxy    = inv_r7_3 * dy * ((5.0F * dx * dx) - r2);
-        float D_xyy    = inv_r7_3 * dx * ((5.0F * dy * dy) - r2);
+
+        // 3rd order spatial derivatives
+        float D_xxx = inv_r7_3 * dx * ((5.0F * dx * dx) - (3.0F * r2));
+        float D_yyy = inv_r7_3 * dy * ((5.0F * dy * dy) - (3.0F * r2));
+        float D_xxy = inv_r7_3 * dy * ((5.0F * dx * dx) - r2);
+        float D_xyy = inv_r7_3 * dx * ((5.0F * dy * dy) - r2);
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        float inv_r9 = inv_r7 * inv_r * inv_r;
+        float dx2    = dx * dx;
+        float dy2    = dy * dy;
+        float r4     = r2 * r2;
+
+        float inv_r9_3  = 3.0F * inv_r9;
+        float inv_r9_15 = 5.0F * inv_r9_3;
+
+        // 4th order spatial derivatives
+        float D_xxxx =
+            inv_r9_3 * (35.0F * dx2 * dx2 - 30.0F * dx2 * r2 + 3.0F * r4);
+        float D_yyyy =
+            inv_r9_3 * (35.0F * dy2 * dy2 - 30.0F * dy2 * r2 + 3.0F * r4);
+        float D_xxxy = inv_r9_15 * dx * dy * (7.0F * dx2 - 3.0F * r2);
+        float D_xyyy = inv_r9_15 * dx * dy * (7.0F * dy2 - 3.0F * r2);
+        float D_xxyy =
+            inv_r9_3 * (35.0F * dx2 * dy2 - 5.0F * r2 * (dx2 + dy2) + r4);
+
+#endif // PS_ORDER >= 3
 
         float m0 = s_multi[M_0];
         float mx = s_multi[M_X];
@@ -1446,6 +1802,57 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         t_local[M_XY] -= my * D_xyy;
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        float mxxx = s_multi[M_XXX];
+        float myyy = s_multi[M_YYY];
+        float mxxy = s_multi[M_XXY];
+        float mxyy = s_multi[M_XYY];
+
+        float inv6 = 1.0F / 6.0F;
+
+        // oct-
+        t_local[M_X] -= inv6 * mxxx * D_xxxx;
+        t_local[M_X] -= 0.5F * mxxy * D_xxxy;
+        t_local[M_X] -= 0.5F * mxyy * D_xxyy;
+        t_local[M_X] -= inv6 * myyy * D_xyyy;
+
+        t_local[M_Y] -= inv6 * mxxx * D_xxxy;
+        t_local[M_Y] -= 0.5F * mxxy * D_xxyy;
+        t_local[M_Y] -= 0.5F * mxyy * D_xyyy;
+        t_local[M_Y] -= inv6 * myyy * D_yyyy;
+
+        // quad+
+        t_local[M_XX] += 0.5F * mxx * D_xxxx;
+        t_local[M_XX] += 0.5F * myy * D_xxyy;
+        t_local[M_XX] += mxy * D_xxxy;
+
+        t_local[M_YY] += 0.5F * mxx * D_xxyy;
+        t_local[M_YY] += 0.5F * myy * D_yyyy;
+        t_local[M_YY] += mxy * D_xyyy;
+
+        t_local[M_XY] += 0.5F * mxx * D_xxxy;
+        t_local[M_XY] += 0.5F * myy * D_xyyy;
+        t_local[M_XY] += mxy * D_xxyy;
+
+        // mono+ di-
+        t_local[M_XXX] += m0 * D_xxx;
+        t_local[M_XXX] -= mx * D_xxxx;
+        t_local[M_XXX] -= my * D_xxxy;
+
+        t_local[M_YYY] += m0 * D_yyy;
+        t_local[M_YYY] -= mx * D_xyyy;
+        t_local[M_YYY] -= my * D_yyyy;
+
+        t_local[M_XXY] += m0 * D_xxy;
+        t_local[M_XXY] -= mx * D_xxxy;
+        t_local[M_XXY] -= my * D_xxyy;
+
+        t_local[M_XYY] += m0 * D_xyy;
+        t_local[M_XYY] -= mx * D_xxyy;
+        t_local[M_XYY] -= my * D_xyyy;
+
+#endif // PS_ORDER >= 3
 
 #else // PS_3D
 
@@ -1453,37 +1860,74 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         float inv_r  = 1.0F / sqrtf(r2);
         float inv_r3 = inv_r * inv_r * inv_r;
 
-        // 1st order
+        // 1st order spatial derivatives
         float D_x = dx * inv_r3;
         float D_y = dy * inv_r3;
         float D_z = dz * inv_r3;
 
-        // 2nd order
         float inv_r5 = inv_r3 * inv_r * inv_r;
-        float D_xx   = ((3.0F * dx * dx) - r2) * inv_r5;
-        float D_yy   = ((3.0F * dy * dy) - r2) * inv_r5;
-        float D_zz   = ((3.0F * dz * dz) - r2) * inv_r5;
-        float D_xy   = (3.0F * dx * dy) * inv_r5;
-        float D_xz   = (3.0F * dx * dz) * inv_r5;
-        float D_yz   = (3.0F * dy * dz) * inv_r5;
+
+        // 2nd order spatial derivatives
+        float D_xx = ((3.0F * dx * dx) - r2) * inv_r5;
+        float D_yy = ((3.0F * dy * dy) - r2) * inv_r5;
+        float D_zz = ((3.0F * dz * dz) - r2) * inv_r5;
+        float D_xy = (3.0F * dx * dy) * inv_r5;
+        float D_xz = (3.0F * dx * dz) * inv_r5;
+        float D_yz = (3.0F * dy * dz) * inv_r5;
 
 #if PS_ORDER >= 2
 
-        // 3rd order
         float inv_r7   = inv_r5 * inv_r * inv_r;
         float inv_r7_3 = 3.0F * inv_r7;
-        float D_xxx    = inv_r7_3 * dx * ((5.0F * dx * dx) - (3.0F * r2));
-        float D_yyy    = inv_r7_3 * dy * ((5.0F * dy * dy) - (3.0F * r2));
-        float D_zzz    = inv_r7_3 * dz * ((5.0F * dz * dz) - (3.0F * r2));
-        float D_xxy    = inv_r7_3 * dy * ((5.0F * dx * dx) - r2);
-        float D_xxz    = inv_r7_3 * dz * ((5.0F * dx * dx) - r2);
-        float D_xyy    = inv_r7_3 * dx * ((5.0F * dy * dy) - r2);
-        float D_xzz    = inv_r7_3 * dx * ((5.0F * dz * dz) - r2);
-        float D_yyz    = inv_r7_3 * dz * ((5.0F * dy * dy) - r2);
-        float D_yzz    = inv_r7_3 * dy * ((5.0F * dz * dz) - r2);
-        float D_xyz    = 15.0F * dx * dy * dz * inv_r7;
+
+        // 3rd order spatial derivatives
+        float D_xxx = inv_r7_3 * dx * ((5.0F * dx * dx) - (3.0F * r2));
+        float D_yyy = inv_r7_3 * dy * ((5.0F * dy * dy) - (3.0F * r2));
+        float D_zzz = inv_r7_3 * dz * ((5.0F * dz * dz) - (3.0F * r2));
+        float D_xxy = inv_r7_3 * dy * ((5.0F * dx * dx) - r2);
+        float D_xxz = inv_r7_3 * dz * ((5.0F * dx * dx) - r2);
+        float D_xyy = inv_r7_3 * dx * ((5.0F * dy * dy) - r2);
+        float D_xzz = inv_r7_3 * dx * ((5.0F * dz * dz) - r2);
+        float D_yyz = inv_r7_3 * dz * ((5.0F * dy * dy) - r2);
+        float D_yzz = inv_r7_3 * dy * ((5.0F * dz * dz) - r2);
+        float D_xyz = 15.0F * dx * dy * dz * inv_r7;
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        float inv_r9 = inv_r7 * inv_r * inv_r;
+        float dx2    = dx * dx;
+        float dy2    = dy * dy;
+        float dz2    = dz * dz;
+        float r4     = r2 * r2;
+
+        float inv_r9_3  = 3.0F * inv_r9;
+        float inv_r9_15 = 5.0F * inv_r9_3;
+
+        // 4th order spatial derivatives
+        float D_xxxx =
+            inv_r9_3 * ((35.0F * dx2 * dx2) - (30.0F * dx2 * r2) + (3.0F * r4));
+        float D_yyyy =
+            inv_r9_3 * ((35.0F * dy2 * dy2) - (30.0F * dy2 * r2) + (3.0F * r4));
+        float D_zzzz =
+            inv_r9_3 * ((35.0F * dz2 * dz2) - (30.0F * dz2 * r2) + (3.0F * r4));
+        float D_xxxy = inv_r9_15 * dx * dy * ((7.0F * dx2) - (3.0F * r2));
+        float D_xxxz = inv_r9_15 * dx * dz * ((7.0F * dx2) - (3.0F * r2));
+        float D_yyyx = inv_r9_15 * dy * dx * ((7.0F * dy2) - (3.0F * r2));
+        float D_yyyz = inv_r9_15 * dy * dz * ((7.0F * dy2) - (3.0F * r2));
+        float D_zzzx = inv_r9_15 * dz * dx * ((7.0F * dz2) - (3.0F * r2));
+        float D_zzzy = inv_r9_15 * dz * dy * ((7.0F * dz2) - (3.0F * r2));
+        float D_xxyy =
+            inv_r9_3 * ((35.0F * dx2 * dy2) - (5.0F * r2 * (dx2 + dy2)) + r4);
+        float D_xxzz =
+            inv_r9_3 * ((35.0F * dx2 * dz2) - (5.0F * r2 * (dx2 + dz2)) + r4);
+        float D_yyzz =
+            inv_r9_3 * ((35.0F * dy2 * dz2) - (5.0F * r2 * (dy2 + dz2)) + r4);
+        float D_xxyz = inv_r9_15 * dy * dz * ((7.0F * dx2) - r2);
+        float D_yyxz = inv_r9_15 * dx * dz * ((7.0F * dy2) - r2);
+        float D_zzxy = inv_r9_15 * dx * dy * ((7.0F * dz2) - r2);
+
+#endif // PS_ORDER >= 3
 
         float m0 = s_multi[M_0];
         float mx = s_multi[M_X];
@@ -1572,6 +2016,150 @@ static void ps_impl_fmm_interaction_pass(ps_context_t* ctx, ps_node_t* target,
         t_local[M_YZ] -= mz * D_yzz;
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        float mxxx = s_multi[M_XXX];
+        float myyy = s_multi[M_YYY];
+        float mzzz = s_multi[M_ZZZ];
+        float mxxy = s_multi[M_XXY];
+        float mxxz = s_multi[M_XXZ];
+        float mxyy = s_multi[M_XYY];
+        float myyz = s_multi[M_YYZ];
+        float mxzz = s_multi[M_XZZ];
+        float myzz = s_multi[M_YZZ];
+        float mxyz = s_multi[M_XYZ];
+
+        float inv6 = 1.0F / 6.0F;
+
+        // oct-
+        t_local[M_X] -= inv6 * mxxx * D_xxxx;
+        t_local[M_X] -= 0.5F * mxxy * D_xxxy;
+        t_local[M_X] -= 0.5F * mxxz * D_xxxz;
+        t_local[M_X] -= 0.5F * mxyy * D_xxyy;
+        t_local[M_X] -= 0.5F * mxzz * D_xxzz;
+        t_local[M_X] -= inv6 * myyy * D_yyyx;
+        t_local[M_X] -= inv6 * mzzz * D_zzzx;
+        t_local[M_X] -= 0.5F * myyz * D_yyxz;
+        t_local[M_X] -= 0.5F * myzz * D_zzxy;
+        t_local[M_X] -= mxyz * D_xxyz;
+
+        t_local[M_Y] -= inv6 * mxxx * D_xxxy;
+        t_local[M_Y] -= 0.5F * mxxy * D_xxyy;
+        t_local[M_Y] -= 0.5F * mxxz * D_xxyz;
+        t_local[M_Y] -= 0.5F * mxyy * D_yyyx;
+        t_local[M_Y] -= 0.5F * mxzz * D_zzxy;
+        t_local[M_Y] -= inv6 * myyy * D_yyyy;
+        t_local[M_Y] -= inv6 * mzzz * D_zzzy;
+        t_local[M_Y] -= 0.5F * myyz * D_yyyz;
+        t_local[M_Y] -= 0.5F * myzz * D_yyzz;
+        t_local[M_Y] -= mxyz * D_yyxz;
+
+        t_local[M_Z] -= inv6 * mxxx * D_xxxz;
+        t_local[M_Z] -= 0.5F * mxxy * D_xxyz;
+        t_local[M_Z] -= 0.5F * mxxz * D_xxzz;
+        t_local[M_Z] -= 0.5F * mxyy * D_yyxz;
+        t_local[M_Z] -= 0.5F * mxzz * D_zzzx;
+        t_local[M_Z] -= inv6 * myyy * D_yyyz;
+        t_local[M_Z] -= inv6 * mzzz * D_zzzz;
+        t_local[M_Z] -= 0.5F * myyz * D_yyzz;
+        t_local[M_Z] -= 0.5F * myzz * D_zzzy;
+        t_local[M_Z] -= mxyz * D_zzxy;
+
+        // quad+
+        t_local[M_XX] += 0.5F * mxx * D_xxxx;
+        t_local[M_XX] += 0.5F * myy * D_xxyy;
+        t_local[M_XX] += 0.5F * mzz * D_xxzz;
+        t_local[M_XX] += mxy * D_xxxy;
+        t_local[M_XX] += mxz * D_xxxz;
+        t_local[M_XX] += myz * D_xxyz;
+
+        t_local[M_YY] += 0.5F * mxx * D_xxyy;
+        t_local[M_YY] += 0.5F * myy * D_yyyy;
+        t_local[M_YY] += 0.5F * mzz * D_yyzz;
+        t_local[M_YY] += mxy * D_yyyx;
+        t_local[M_YY] += mxz * D_yyxz;
+        t_local[M_YY] += myz * D_yyyz;
+
+        t_local[M_ZZ] += 0.5F * mxx * D_xxzz;
+        t_local[M_ZZ] += 0.5F * myy * D_yyzz;
+        t_local[M_ZZ] += 0.5F * mzz * D_zzzz;
+        t_local[M_ZZ] += mxy * D_zzxy;
+        t_local[M_ZZ] += mxz * D_zzzx;
+        t_local[M_ZZ] += myz * D_zzzy;
+
+        t_local[M_XY] += 0.5F * mxx * D_xxxy;
+        t_local[M_XY] += 0.5F * myy * D_yyyx;
+        t_local[M_XY] += 0.5F * mzz * D_zzxy;
+        t_local[M_XY] += mxy * D_xxyy;
+        t_local[M_XY] += mxz * D_xxyz;
+        t_local[M_XY] += myz * D_yyxz;
+
+        t_local[M_XZ] += 0.5F * mxx * D_xxxz;
+        t_local[M_XZ] += 0.5F * myy * D_yyxz;
+        t_local[M_XZ] += 0.5F * mzz * D_zzzx;
+        t_local[M_XZ] += mxy * D_xxyz;
+        t_local[M_XZ] += mxz * D_xxzz;
+        t_local[M_XZ] += myz * D_zzxy;
+
+        t_local[M_YZ] += 0.5F * mxx * D_xxyz;
+        t_local[M_YZ] += 0.5F * myy * D_yyyz;
+        t_local[M_YZ] += 0.5F * mzz * D_zzzy;
+        t_local[M_YZ] += mxy * D_yyxz;
+        t_local[M_YZ] += mxz * D_zzxy;
+        t_local[M_YZ] += myz * D_yyzz;
+
+        // mono+ di-
+        t_local[M_XXX] += m0 * D_xxx;
+        t_local[M_XXX] -= mx * D_xxxx;
+        t_local[M_XXX] -= my * D_xxxy;
+        t_local[M_XXX] -= mz * D_xxxz;
+
+        t_local[M_YYY] += m0 * D_yyy;
+        t_local[M_YYY] -= mx * D_yyyx;
+        t_local[M_YYY] -= my * D_yyyy;
+        t_local[M_YYY] -= mz * D_yyyz;
+
+        t_local[M_ZZZ] += m0 * D_zzz;
+        t_local[M_ZZZ] -= mx * D_zzzx;
+        t_local[M_ZZZ] -= my * D_zzzy;
+        t_local[M_ZZZ] -= mz * D_zzzz;
+
+        t_local[M_XXY] += m0 * D_xxy;
+        t_local[M_XXY] -= mx * D_xxxy;
+        t_local[M_XXY] -= my * D_xxyy;
+        t_local[M_XXY] -= mz * D_xxyz;
+
+        t_local[M_XXZ] += m0 * D_xxz;
+        t_local[M_XXZ] -= mx * D_xxxz;
+        t_local[M_XXZ] -= my * D_xxyz;
+        t_local[M_XXZ] -= mz * D_xxzz;
+
+        t_local[M_XYY] += m0 * D_xyy;
+        t_local[M_XYY] -= mx * D_xxyy;
+        t_local[M_XYY] -= my * D_yyyx;
+        t_local[M_XYY] -= mz * D_yyxz;
+
+        t_local[M_YYZ] += m0 * D_yyz;
+        t_local[M_YYZ] -= mx * D_yyxz;
+        t_local[M_YYZ] -= my * D_yyyz;
+        t_local[M_YYZ] -= mz * D_yyzz;
+
+        t_local[M_XZZ] += m0 * D_xzz;
+        t_local[M_XZZ] -= mx * D_xxzz;
+        t_local[M_XZZ] -= my * D_zzxy;
+        t_local[M_XZZ] -= mz * D_zzzx;
+
+        t_local[M_YZZ] += m0 * D_yzz;
+        t_local[M_YZZ] -= mx * D_zzxy;
+        t_local[M_YZZ] -= my * D_yyzz;
+        t_local[M_YZZ] -= mz * D_zzzy;
+
+        t_local[M_XYZ] += m0 * D_xyz;
+        t_local[M_XYZ] -= mx * D_xxyz;
+        t_local[M_XYZ] -= my * D_yyxz;
+        t_local[M_XYZ] -= mz * D_zzxy;
+
+#endif // PS_ORDER >= 3
 
 #endif // PS_3D
 
@@ -1688,6 +2276,15 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         __m256 L_xy = _mm256_set1_ps(t_local[M_XY]);
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        // broadcast gradients
+        __m256 L_xxx = _mm256_set1_ps(t_local[M_XXX]);
+        __m256 L_yyy = _mm256_set1_ps(t_local[M_YYY]);
+        __m256 L_xxy = _mm256_set1_ps(t_local[M_XXY]);
+        __m256 L_xyy = _mm256_set1_ps(t_local[M_XYY]);
+
+#endif // PS_ORDER >= 3
 
         // process in chunks of 8
         for (; i + 7 < node->data.leaf.particle_cnt; i += 8) {
@@ -1700,6 +2297,9 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             __m256 cur_fx = _mm256_loadu_ps(&arrs->fx[idx]);
             __m256 cur_fy = _mm256_loadu_ps(&arrs->fy[idx]);
 
+            __m256 f_x = L_x;
+            __m256 f_y = L_y;
+
 #if PS_ORDER >= 2
 
             // load particle coords to find distance from center
@@ -1710,19 +2310,36 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             __m256 dy = _mm256_sub_ps(p_y, n_y);
 
             // fx = L_x + L_xx*dx + L_xy*dy
-            __m256 f_x =
-                _mm256_add_ps(L_x, _mm256_add_ps(_mm256_mul_ps(L_xx, dx),
-                                                 _mm256_mul_ps(L_xy, dy)));
-            __m256 f_y =
-                _mm256_add_ps(L_y, _mm256_add_ps(_mm256_mul_ps(L_xy, dx),
-                                                 _mm256_mul_ps(L_yy, dy)));
+            f_x = _mm256_add_ps(f_x, _mm256_add_ps(_mm256_mul_ps(L_xx, dx),
+                                                   _mm256_mul_ps(L_xy, dy)));
+            f_y = _mm256_add_ps(f_y, _mm256_add_ps(_mm256_mul_ps(L_xy, dx),
+                                                   _mm256_mul_ps(L_yy, dy)));
 
-#else // PS_ORDER == 1
+#endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
 
-            __m256 f_x = L_x;
-            __m256 f_y = L_y;
+            __m256 half = _mm256_set1_ps(0.5F);
+            __m256 dx2  = _mm256_mul_ps(dx, dx);
+            __m256 dy2  = _mm256_mul_ps(dy, dy);
+            __m256 dxdy = _mm256_mul_ps(dx, dy);
 
-#endif // PS_ORDER == 1
+            // add polynomial to f_x
+            // f_x += 0.5 * (L_xxx*dx2 + L_xyy*dy2) + L_xxy*dxdy
+            f_x = _mm256_add_ps(
+                f_x,
+                _mm256_mul_ps(half, _mm256_add_ps(_mm256_mul_ps(L_xxx, dx2),
+                                                  _mm256_mul_ps(L_xyy, dy2))));
+            f_x = _mm256_add_ps(f_x, _mm256_mul_ps(L_xxy, dxdy));
+
+            // add polynomial to f_y
+            // f_y += 0.5 * (L_xxy*dx2 + L_yyy*dy2) + L_xyy*dxdy
+            f_y = _mm256_add_ps(
+                f_y,
+                _mm256_mul_ps(half, _mm256_add_ps(_mm256_mul_ps(L_xxy, dx2),
+                                                  _mm256_mul_ps(L_yyy, dy2))));
+            f_y = _mm256_add_ps(f_y, _mm256_mul_ps(L_xyy, dxdy));
+
+#endif // PS_ORDER >= 3
 
             // F += mass * field
             cur_fx = _mm256_add_ps(cur_fx, _mm256_mul_ps(m_vec, f_x));
@@ -1740,17 +2357,25 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         float32x4_t n_y = vdupq_n_f32(node->y);
 
         // broadcast local field base values
-        __m256 L_x = vdupq_n_f32(t_local[M_X]);
-        __m256 L_y = vdupq_n_f32(t_local[M_Y]);
+        float32x4_t L_x = vdupq_n_f32(t_local[M_X]);
+        float32x4_t L_y = vdupq_n_f32(t_local[M_Y]);
 
 #if PS_ORDER >= 2
 
         // broadcast gradient coeffs
-        __m256 L_xx = vdupq_n_f32(t_local[M_XX]);
-        __m256 L_yy = vdupq_n_f32(t_local[M_YY]);
-        __m256 L_xy = vdupq_n_f32(t_local[M_XY]);
+        float32x4_t L_xx = vdupq_n_f32(t_local[M_XX]);
+        float32x4_t L_yy = vdupq_n_f32(t_local[M_YY]);
+        float32x4_t L_xy = vdupq_n_f32(t_local[M_XY]);
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        float32x4_t L_xxx = vdupq_n_f32(t_local[M_XXX]);
+        float32x4_t L_yyy = vdupq_n_f32(t_local[M_YYY]);
+        float32x4_t L_xxy = vdupq_n_f32(t_local[M_XXY]);
+        float32x4_t L_xyy = vdupq_n_f32(t_local[M_XYY]);
+
+#endif // PS_ORDER >= 3
 
         // process in chunks of 4
         for (; i + 3 < node->data.leaf.particle_cnt; i += 4) {
@@ -1763,6 +2388,9 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             float32x4_t cur_fx = vld1q_f32(&arrs->fx[idx]);
             float32x4_t cur_fy = vld1q_f32(&arrs->fy[idx]);
 
+            float32x4_t f_x = L_x;
+            float32x4_t f_y = L_y;
+
 #if PS_ORDER >= 2
 
             // load particle coords to find distance from center
@@ -1771,9 +2399,6 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
 
             float32x4_t dx = vsubq_f32(p_x, n_x);
             float32x4_t dy = vsubq_f32(p_y, n_y);
-
-            float32x4_t f_x = L_x;
-            float32x4_t f_y = L_y;
 
             // accumulate the spatial gradients
             f_x = vmlaq_f32(f_x, L_xx, dx);
@@ -1784,12 +2409,28 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             f_y = vmlaq_f32(f_y, L_yy, dy);
             f_y = vmlaq_f32(f_y, L_yz, dz);
 
-#else // PS_ORDER == 1
+#endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
 
-            float32x4_t f_x = L_x;
-            float32x4_t f_y = L_y;
+            float32x4_t half = vdupq_n_f32(0.5F);
+            float32x4_t dx2  = vmulq_f32(dx, dx);
+            float32x4_t dy2  = vmulq_f32(dy, dy);
+            float32x4_t dxdy = vmulq_f32(dx, dy);
 
-#endif // PS_ORDER == 1
+            // group the squared terms to multiply by 0.5 once
+            float32x4_t px2 = vmulq_f32(L_xxx, dx2);
+            px2             = vmlaq_f32(px2, L_xyy, dy2);
+
+            f_x = vmlaq_f32(f_x, half, px2);
+            f_x = vmlaq_f32(f_x, L_xxy, dxdy);
+
+            float32x4_t py2 = vmulq_f32(L_xxy, dx2);
+            py2             = vmlaq_f32(py2, L_yyy, dy2);
+
+            f_y = vmlaq_f32(f_y, half, py2);
+            f_y = vmlaq_f32(f_y, L_xyy, dxdy);
+
+#endif // PS_ORDER >= 3
 
             // F += mass * field
             cur_fx = vmlaq_f32(cur_fx, m_vec, f_x);
@@ -1807,22 +2448,35 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             uint32_t idx  = node->data.leaf.first_particle_idx + i;
             float    mass = arrs->mass[idx];
 
+            float f_x = t_local[M_X];
+            float f_y = t_local[M_Y];
+
 #if PS_ORDER >= 2
 
             float dx = arrs->x[idx] - node->x;
             float dy = arrs->y[idx] - node->y;
 
-            float f_x =
-                t_local[M_X] + (t_local[M_XX] * dx) + (t_local[M_XY] * dy);
-            float f_y =
-                t_local[M_Y] + (t_local[M_XY] * dx) + (t_local[M_YY] * dy);
+            f_x += t_local[M_XX] * dx;
+            f_x += t_local[M_XY] * dy;
 
-#else // PS_ORDER == 1
+            f_y += t_local[M_XY] * dx;
+            f_y += t_local[M_YY] * dy;
 
-            float f_x = t_local[M_X];
-            float f_y = t_local[M_Y];
+#endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
 
-#endif // PS_ORDER == 1
+            float dx2 = dx * dx;
+            float dy2 = dy * dy;
+
+            f_x += 0.5F * t_local[M_XXX] * dx2;
+            f_x += 0.5F * t_local[M_XYY] * dy2;
+            f_x += t_local[M_XXY] * dx * dy;
+
+            f_y += 0.5F * t_local[M_XXY] * dx2;
+            f_y += 0.5F * t_local[M_YYY] * dy2;
+            f_y += t_local[M_XYY] * dx * dy;
+
+#endif // PS_ORDER >= 3
 
             // F += mass * field
             arrs->fx[idx] += mass * f_x;
@@ -1854,6 +2508,21 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         __m256 L_yz = _mm256_set1_ps(t_local[M_YZ]);
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        // broadcast gradients
+        __m256 L_xxx = _mm256_set1_ps(t_local[M_XXX]);
+        __m256 L_yyy = _mm256_set1_ps(t_local[M_YYY]);
+        __m256 L_zzz = _mm256_set1_ps(t_local[M_ZZZ]);
+        __m256 L_xxy = _mm256_set1_ps(t_local[M_XXY]);
+        __m256 L_xxz = _mm256_set1_ps(t_local[M_XXZ]);
+        __m256 L_xyy = _mm256_set1_ps(t_local[M_XYY]);
+        __m256 L_yyz = _mm256_set1_ps(t_local[M_YYZ]);
+        __m256 L_xzz = _mm256_set1_ps(t_local[M_XZZ]);
+        __m256 L_yzz = _mm256_set1_ps(t_local[M_YZZ]);
+        __m256 L_xyz = _mm256_set1_ps(t_local[M_XYZ]);
+
+#endif // PS_ORDER >= 3
 
         // process in chunks of 8
         for (; i + 7 < node->data.leaf.particle_cnt; i += 8) {
@@ -1867,6 +2536,10 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             __m256 cur_fy = _mm256_loadu_ps(&arrs->fy[idx]);
             __m256 cur_fz = _mm256_loadu_ps(&arrs->fz[idx]);
 
+            __m256 f_x = L_x;
+            __m256 f_y = L_y;
+            __m256 f_z = L_z;
+
 #if PS_ORDER >= 2
 
             // load particle coords to find distance from center
@@ -1879,26 +2552,67 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             __m256 dz = _mm256_sub_ps(p_z, n_z);
 
             // fx = L_x + L_xx*dx + L_xy*dy + L_xz*dz
-            __m256 f_x = _mm256_add_ps(
-                L_x, _mm256_add_ps(_mm256_mul_ps(L_xx, dx),
+            f_x = _mm256_add_ps(
+                f_x, _mm256_add_ps(_mm256_mul_ps(L_xx, dx),
                                    _mm256_add_ps(_mm256_mul_ps(L_xy, dy),
                                                  _mm256_mul_ps(L_xz, dz))));
-            __m256 f_y = _mm256_add_ps(
-                L_y, _mm256_add_ps(_mm256_mul_ps(L_xy, dx),
+            f_y = _mm256_add_ps(
+                f_y, _mm256_add_ps(_mm256_mul_ps(L_xy, dx),
                                    _mm256_add_ps(_mm256_mul_ps(L_yy, dy),
                                                  _mm256_mul_ps(L_yz, dz))));
-            __m256 f_z = _mm256_add_ps(
-                L_z, _mm256_add_ps(_mm256_mul_ps(L_xz, dx),
+            f_z = _mm256_add_ps(
+                f_z, _mm256_add_ps(_mm256_mul_ps(L_xz, dx),
                                    _mm256_add_ps(_mm256_mul_ps(L_yz, dy),
                                                  _mm256_mul_ps(L_zz, dz))));
 
-#else // PS_ORDER == 1
+#endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
 
-            __m256 f_x = L_x;
-            __m256 f_y = L_y;
-            __m256 f_z = L_z;
+            __m256 half = _mm256_set1_ps(0.5F);
+            __m256 dx2  = _mm256_mul_ps(dx, dx);
+            __m256 dy2  = _mm256_mul_ps(dy, dy);
+            __m256 dz2  = _mm256_mul_ps(dz, dz);
+            __m256 dxdy = _mm256_mul_ps(dx, dy);
+            __m256 dxdz = _mm256_mul_ps(dx, dz);
+            __m256 dydz = _mm256_mul_ps(dy, dz);
 
-#endif // PS_ORDER == 1
+            // add polynomial to f_x
+            f_x = _mm256_add_ps(
+                f_x, _mm256_mul_ps(
+                         half, _mm256_add_ps(
+                                   _mm256_mul_ps(L_xxx, dx2),
+                                   _mm256_add_ps(_mm256_mul_ps(L_xyy, dy2),
+                                                 _mm256_mul_ps(L_xzz, dz2)))));
+            f_x = _mm256_add_ps(
+                f_x, _mm256_add_ps(_mm256_mul_ps(L_xxy, dxdy),
+                                   _mm256_add_ps(_mm256_mul_ps(L_xxz, dxdz),
+                                                 _mm256_mul_ps(L_xyz, dydz))));
+
+            // add polynomial to f_y
+            f_y = _mm256_add_ps(
+                f_y, _mm256_mul_ps(
+                         half, _mm256_add_ps(
+                                   _mm256_mul_ps(L_xxy, dx2),
+                                   _mm256_add_ps(_mm256_mul_ps(L_yyy, dy2),
+                                                 _mm256_mul_ps(L_yzz, dz2)))));
+            f_y = _mm256_add_ps(
+                f_y, _mm256_add_ps(_mm256_mul_ps(L_xyy, dxdy),
+                                   _mm256_add_ps(_mm256_mul_ps(L_xyz, dxdz),
+                                                 _mm256_mul_ps(L_yyz, dydz))));
+
+            // Add polynomial to f_z
+            f_z = _mm256_add_ps(
+                f_z, _mm256_mul_ps(
+                         half, _mm256_add_ps(
+                                   _mm256_mul_ps(L_xxz, dx2),
+                                   _mm256_add_ps(_mm256_mul_ps(L_yyz, dy2),
+                                                 _mm256_mul_ps(L_zzz, dz2)))));
+            f_z = _mm256_add_ps(
+                f_z, _mm256_add_ps(_mm256_mul_ps(L_xyz, dxdy),
+                                   _mm256_add_ps(_mm256_mul_ps(L_xzz, dxdz),
+                                                 _mm256_mul_ps(L_yzz, dydz))));
+
+#endif // PS_ORDER >= 3
 
             // F += mass * field
             cur_fx = _mm256_add_ps(cur_fx, _mm256_mul_ps(m_vec, f_x));
@@ -1919,21 +2633,35 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         float32x4_t n_z = vdupq_n_f32(node->z);
 
         // broadcast local field base values
-        __m256 L_x = vdupq_n_f32(t_local[M_X]);
-        __m256 L_y = vdupq_n_f32(t_local[M_Y]);
-        __m256 L_z = vdupq_n_f32(t_local[M_Z]);
+        float32x4_t L_x = vdupq_n_f32(t_local[M_X]);
+        float32x4_t L_y = vdupq_n_f32(t_local[M_Y]);
+        float32x4_t L_z = vdupq_n_f32(t_local[M_Z]);
 
 #if PS_ORDER >= 2
 
         // broadcast gradient coeffs
-        __m256 L_xx = vdupq_n_f32(t_local[M_XX]);
-        __m256 L_yy = vdupq_n_f32(t_local[M_YY]);
-        __m256 L_zz = vdupq_n_f32(t_local[M_ZZ]);
-        __m256 L_xy = vdupq_n_f32(t_local[M_XY]);
-        __m256 L_xz = vdupq_n_f32(t_local[M_XZ]);
-        __m256 L_yz = vdupq_n_f32(t_local[M_YZ]);
+        float32x4_t L_xx = vdupq_n_f32(t_local[M_XX]);
+        float32x4_t L_yy = vdupq_n_f32(t_local[M_YY]);
+        float32x4_t L_zz = vdupq_n_f32(t_local[M_ZZ]);
+        float32x4_t L_xy = vdupq_n_f32(t_local[M_XY]);
+        float32x4_t L_xz = vdupq_n_f32(t_local[M_XZ]);
+        float32x4_t L_yz = vdupq_n_f32(t_local[M_YZ]);
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        float32x4_t L_xxx = vdupq_n_f32(t_local[M_XXX]);
+        float32x4_t L_yyy = vdupq_n_f32(t_local[M_YYY]);
+        float32x4_t L_zzz = vdupq_n_f32(t_local[M_ZZZ]);
+        float32x4_t L_xxy = vdupq_n_f32(t_local[M_XXY]);
+        float32x4_t L_xxz = vdupq_n_f32(t_local[M_XXZ]);
+        float32x4_t L_xyy = vdupq_n_f32(t_local[M_XYY]);
+        float32x4_t L_yyz = vdupq_n_f32(t_local[M_YYZ]);
+        float32x4_t L_xzz = vdupq_n_f32(t_local[M_XZZ]);
+        float32x4_t L_yzz = vdupq_n_f32(t_local[M_YZZ]);
+        float32x4_t L_xyz = vdupq_n_f32(t_local[M_XYZ]);
+
+#endif // PS_ORDER >= 3
 
         // process in chunks of 4
         for (; i + 3 < node->data.leaf.particle_cnt; i += 4) {
@@ -1947,6 +2675,10 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             float32x4_t cur_fy = vld1q_f32(&arrs->fy[idx]);
             float32x4_t cur_fz = vld1q_f32(&arrs->fz[idx]);
 
+            float32x4_t f_x = L_x;
+            float32x4_t f_y = L_y;
+            float32x4_t f_z = L_z;
+
 #if PS_ORDER >= 2
 
             // load particle coords to find distance from center
@@ -1957,10 +2689,6 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             float32x4_t dx = vsubq_f32(p_x, n_x);
             float32x4_t dy = vsubq_f32(p_y, n_y);
             float32x4_t dz = vsubq_f32(p_z, n_z);
-
-            float32x4_t f_x = L_x;
-            float32x4_t f_y = L_y;
-            float32x4_t f_z = L_z;
 
             // accumulate the spatial gradients
             f_x = vmlaq_f32(f_x, L_xx, dx);
@@ -1975,13 +2703,45 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             f_z = vmlaq_f32(f_z, L_yz, dy);
             f_z = vmlaq_f32(f_z, L_zz, dz);
 
-#else // PS_ORDER == 1
+#endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
 
-            float32x4_t f_x = L_x;
-            float32x4_t f_y = L_y;
-            float32x4_t f_z = L_z;
+            float32x4_t half = vdupq_n_f32(0.5F);
+            float32x4_t dx2  = vmulq_f32(dx, dx);
+            float32x4_t dy2  = vmulq_f32(dy, dy);
+            float32x4_t dz2  = vmulq_f32(dz, dz);
+            float32x4_t dxdy = vmulq_f32(dx, dy);
+            float32x4_t dxdz = vmulq_f32(dx, dz);
+            float32x4_t dydz = vmulq_f32(dy, dz);
 
-#endif // PS_ORDER == 1
+            // f_x polynomial
+            float32x4_t px2 = vmulq_f32(L_xxx, dx2);
+            px2             = vmlaq_f32(px2, L_xyy, dy2);
+            px2             = vmlaq_f32(px2, L_xzz, dz2);
+            f_x             = vmlaq_f32(f_x, half, px2);
+            f_x             = vmlaq_f32(f_x, L_xxy, dxdy);
+            f_x             = vmlaq_f32(f_x, L_xxz, dxdz);
+            f_x             = vmlaq_f32(f_x, L_xyz, dydz);
+
+            // f_y polynomial
+            float32x4_t py2 = vmulq_f32(L_xxy, dx2);
+            py2             = vmlaq_f32(py2, L_yyy, dy2);
+            py2             = vmlaq_f32(py2, L_yzz, dz2);
+            f_y             = vmlaq_f32(f_y, half, py2);
+            f_y             = vmlaq_f32(f_y, L_xyy, dxdy);
+            f_y             = vmlaq_f32(f_y, L_xyz, dxdz);
+            f_y             = vmlaq_f32(f_y, L_yyz, dydz);
+
+            // f_z polynomial
+            float32x4_t pz2 = vmulq_f32(L_xxz, dx2);
+            pz2             = vmlaq_f32(pz2, L_yyz, dy2);
+            pz2             = vmlaq_f32(pz2, L_zzz, dz2);
+            f_z             = vmlaq_f32(f_z, half, pz2);
+            f_z             = vmlaq_f32(f_z, L_xyz, dxdy);
+            f_z             = vmlaq_f32(f_z, L_xzz, dxdz);
+            f_z             = vmlaq_f32(f_z, L_yzz, dydz);
+
+#endif // PS_ORDER >= 3
 
             // F += mass * field
             cur_fx = vmlaq_f32(cur_fx, m_vec, f_x);
@@ -1994,12 +2754,16 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             vst1q_f32(&arrs->fz[idx], cur_fz);
         }
 
-#endif
+#endif // PS_USE_NEON
 
         // fallback for the remainder
         for (; i < node->data.leaf.particle_cnt; ++i) {
             uint32_t idx  = node->data.leaf.first_particle_idx + i;
             float    mass = arrs->mass[idx];
+
+            float f_x = t_local[M_X];
+            float f_y = t_local[M_Y];
+            float f_z = t_local[M_Z];
 
 #if PS_ORDER >= 2
 
@@ -2007,20 +2771,48 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
             float dy = arrs->y[idx] - node->y;
             float dz = arrs->z[idx] - node->z;
 
-            float f_x = t_local[M_X] + (t_local[M_XX] * dx) +
-                        (t_local[M_XY] * dy) + (t_local[M_XZ] * dz);
-            float f_y = t_local[M_Y] + (t_local[M_XY] * dx) +
-                        (t_local[M_YY] * dy) + (t_local[M_YZ] * dz);
-            float f_z = t_local[M_Z] + (t_local[M_XZ] * dx) +
-                        (t_local[M_YZ] * dy) + (t_local[M_ZZ] * dz);
+            f_x += t_local[M_XX] * dx;
+            f_x += t_local[M_XY] * dy;
+            f_x += t_local[M_XZ] * dz;
 
-#else // PS_ORDER == 1
+            f_y += t_local[M_XY] * dx;
+            f_y += t_local[M_YY] * dy;
+            f_y += t_local[M_YZ] * dz;
 
-            float f_x = t_local[M_X];
-            float f_y = t_local[M_Y];
-            float f_z = t_local[M_Z];
+            f_z += t_local[M_XZ] * dx;
+            f_z += t_local[M_YZ] * dy;
+            f_z += t_local[M_ZZ] * dz;
 
-#endif // PS_ORDER == 1
+#endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+            float dx2 = dx * dx;
+            float dy2 = dy * dy;
+            float dz2 = dz * dz;
+
+            // shift base force field by 2nd order grads
+            f_x += 0.5F * t_local[M_XXX] * dx2;
+            f_x += 0.5F * t_local[M_XYY] * dy2;
+            f_x += 0.5F * t_local[M_XZZ] * dz2;
+            f_x += t_local[M_XXY] * dx * dy;
+            f_x += t_local[M_XXZ] * dx * dz;
+            f_x += t_local[M_XYZ] * dy * dz;
+
+            f_y += 0.5F * t_local[M_XXY] * dx2;
+            f_y += 0.5F * t_local[M_YYY] * dy2;
+            f_y += 0.5F * t_local[M_YZZ] * dz2;
+            f_y += t_local[M_XYY] * dx * dy;
+            f_y += t_local[M_XYZ] * dx * dz;
+            f_y += t_local[M_YYZ] * dy * dz;
+
+            f_z += 0.5F * t_local[M_XXZ] * dx2;
+            f_z += 0.5F * t_local[M_YYZ] * dy2;
+            f_z += 0.5F * t_local[M_ZZZ] * dz2;
+            f_z += t_local[M_XYZ] * dx * dy;
+            f_z += t_local[M_XZZ] * dx * dz;
+            f_z += t_local[M_YZZ] * dy * dz;
+
+#endif // PS_ORDER >= 3
 
             // F = m * a
             arrs->fx[idx] += mass * f_x;
@@ -2053,8 +2845,11 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         float dy = child->y - node->y;
 
         // shift linear forces by the gradient
-        child_local[M_X] += (node_local[M_XX] * dx) + (node_local[M_XY] * dy);
-        child_local[M_Y] += (node_local[M_XY] * dx) + (node_local[M_YY] * dy);
+        child_local[M_X] += node_local[M_XX] * dx;
+        child_local[M_X] += node_local[M_XY] * dy;
+
+        child_local[M_Y] += node_local[M_XY] * dx;
+        child_local[M_Y] += node_local[M_YY] * dy;
 
         // shift the gradients themselves
         child_local[M_XX] += node_local[M_XX];
@@ -2062,6 +2857,37 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         child_local[M_XY] += node_local[M_XY];
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        float dx2 = dx * dx;
+        float dy2 = dy * dy;
+
+        // shift base force field by 2nd order grads
+        child_local[M_X] += 0.5F * node_local[M_XXX] * dx2;
+        child_local[M_X] += 0.5F * node_local[M_XYY] * dy2;
+        child_local[M_X] += node_local[M_XXY] * dx * dy;
+
+        child_local[M_Y] += 0.5F * node_local[M_XXY] * dx2;
+        child_local[M_Y] += 0.5F * node_local[M_YYY] * dy2;
+        child_local[M_Y] += node_local[M_XYY] * dx * dy;
+
+        // shift 1st order grads by 2nd order grads
+        child_local[M_XX] += node_local[M_XXX] * dx;
+        child_local[M_XX] += node_local[M_XXY] * dy;
+
+        child_local[M_YY] += node_local[M_XYY] * dx;
+        child_local[M_YY] += node_local[M_YYY] * dy;
+
+        child_local[M_XY] += node_local[M_XXY] * dx;
+        child_local[M_XY] += node_local[M_XYY] * dy;
+
+        // shift the gradients themselves
+        child_local[M_XXX] += node_local[M_XXX];
+        child_local[M_YYY] += node_local[M_YYY];
+        child_local[M_XXY] += node_local[M_XXY];
+        child_local[M_XYY] += node_local[M_XYY];
+
+#endif // PS_ORDER >= 3
 
 #else // PS_3D
 
@@ -2075,13 +2901,20 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         float dy = child->y - node->y;
         float dz = child->z - node->z;
 
-        child_local[M_X] += (node_local[M_XX] * dx) + (node_local[M_XY] * dy) +
-                            (node_local[M_XZ] * dz);
-        child_local[M_Y] += (node_local[M_XY] * dx) + (node_local[M_YY] * dy) +
-                            (node_local[M_YZ] * dz);
-        child_local[M_Z] += (node_local[M_XZ] * dx) + (node_local[M_YZ] * dy) +
-                            (node_local[M_ZZ] * dz);
+        // shift linear forces by the gradient
+        child_local[M_X] += node_local[M_XX] * dx;
+        child_local[M_X] += node_local[M_XY] * dy;
+        child_local[M_X] += node_local[M_XZ] * dz;
 
+        child_local[M_Y] += node_local[M_XY] * dx;
+        child_local[M_Y] += node_local[M_YY] * dy;
+        child_local[M_Y] += node_local[M_YZ] * dz;
+
+        child_local[M_Z] += node_local[M_XZ] * dx;
+        child_local[M_Z] += node_local[M_YZ] * dy;
+        child_local[M_Z] += node_local[M_ZZ] * dz;
+
+        // shift the gradients themselves
         child_local[M_XX] += node_local[M_XX];
         child_local[M_YY] += node_local[M_YY];
         child_local[M_ZZ] += node_local[M_ZZ];
@@ -2090,6 +2923,72 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
         child_local[M_YZ] += node_local[M_YZ];
 
 #endif // PS_ORDER >= 2
+#if PS_ORDER >= 3
+
+        float dx2 = dx * dx;
+        float dy2 = dy * dy;
+        float dz2 = dz * dz;
+
+        // shift base force field by 2nd order grads
+        child_local[M_X] += 0.5F * node_local[M_XXX] * dx2;
+        child_local[M_X] += 0.5F * node_local[M_XYY] * dy2;
+        child_local[M_X] += 0.5F * node_local[M_XZZ] * dz2;
+        child_local[M_X] += node_local[M_XXY] * dx * dy;
+        child_local[M_X] += node_local[M_XXZ] * dx * dz;
+        child_local[M_X] += node_local[M_XYZ] * dy * dz;
+
+        child_local[M_Y] += 0.5F * node_local[M_XXY] * dx2;
+        child_local[M_Y] += 0.5F * node_local[M_YYY] * dy2;
+        child_local[M_Y] += 0.5F * node_local[M_YZZ] * dz2;
+        child_local[M_Y] += node_local[M_XYY] * dx * dy;
+        child_local[M_Y] += node_local[M_XYZ] * dx * dz;
+        child_local[M_Y] += node_local[M_YYZ] * dy * dz;
+
+        child_local[M_Z] += 0.5F * node_local[M_XXZ] * dx2;
+        child_local[M_Z] += 0.5F * node_local[M_YYZ] * dy2;
+        child_local[M_Z] += 0.5F * node_local[M_ZZZ] * dz2;
+        child_local[M_Z] += node_local[M_XYZ] * dx * dy;
+        child_local[M_Z] += node_local[M_XZZ] * dx * dz;
+        child_local[M_Z] += node_local[M_YZZ] * dy * dz;
+
+        // shift 1st order grads by 2nd order grads
+        child_local[M_XX] += node_local[M_XXX] * dx;
+        child_local[M_XX] += node_local[M_XXY] * dy;
+        child_local[M_XX] += node_local[M_XXZ] * dz;
+
+        child_local[M_YY] += node_local[M_XYY] * dx;
+        child_local[M_YY] += node_local[M_YYY] * dy;
+        child_local[M_YY] += node_local[M_YYZ] * dz;
+
+        child_local[M_ZZ] += node_local[M_XZZ] * dx;
+        child_local[M_ZZ] += node_local[M_YZZ] * dy;
+        child_local[M_ZZ] += node_local[M_ZZZ] * dz;
+
+        child_local[M_XY] += node_local[M_XXY] * dx;
+        child_local[M_XY] += node_local[M_XYY] * dy;
+        child_local[M_XY] += node_local[M_XYZ] * dz;
+
+        child_local[M_XZ] += node_local[M_XXZ] * dx;
+        child_local[M_XZ] += node_local[M_XYZ] * dy;
+        child_local[M_XZ] += node_local[M_XZZ] * dz;
+
+        child_local[M_YZ] += node_local[M_XYZ] * dx;
+        child_local[M_YZ] += node_local[M_YYZ] * dy;
+        child_local[M_YZ] += node_local[M_YZZ] * dz;
+
+        // shift the gradients themselves
+        child_local[M_XXX] += node_local[M_XXX];
+        child_local[M_YYY] += node_local[M_YYY];
+        child_local[M_ZZZ] += node_local[M_ZZZ];
+        child_local[M_XXY] += node_local[M_XXY];
+        child_local[M_XXZ] += node_local[M_XXZ];
+        child_local[M_XYY] += node_local[M_XYY];
+        child_local[M_YYZ] += node_local[M_YYZ];
+        child_local[M_XZZ] += node_local[M_XZZ];
+        child_local[M_YZZ] += node_local[M_YZZ];
+        child_local[M_XYZ] += node_local[M_XYZ];
+
+#endif // PS_ORDER >= 3
 
 #endif // PS_3D
 
