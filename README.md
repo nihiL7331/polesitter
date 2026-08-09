@@ -11,6 +11,10 @@
 Include the header in one C file with `POLESITTER_IMPLEMENTATION` defined. \
 Define `PS_MULTITHREADING` as well when using more than one thread. \
 Define `PS_2D` when simulating in two-dimensional space.
+Use #define PS_ORDER 1-3 to pick maximum order of Taylor expansions used in solver. \
+    * (higher = worse performance, better accuracy)
+    * (default = 2)
+
 
 ```c
 #define PS_MULTITHREADING
