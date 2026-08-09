@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #define PS_MULTITHREADING
+#define PS_ORDER 1
 #define POLESITTER_IMPLEMENTATION
 #include "../src/polesitter.h"
 
