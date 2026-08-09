@@ -177,12 +177,11 @@
 #define POLESITTER_H
 
 #include <float.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
-#if defined(__AVX2__)
+#ifdef __AVX2__
 
 #include <immintrin.h>
 #define PS_USE_AVX2
@@ -222,7 +221,7 @@ typedef DWORD(WINAPI* ps_thrd_func_t)(void*);
 #define PS_THRD_RET_TYPE DWORD WINAPI
 #define PS_THRD_RET_VAL  0
 
-#if defined(_WIN64)
+#ifdef _WIN64
 
 // clang-format off
 
@@ -1396,7 +1395,7 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
 
 #ifdef PS_2D
 
-#if defined(PS_USE_AVX2)
+#ifdef PS_USE_AVX2
         // broadcast local bg field to all 8 lanes
         __m256 f_x_vec = _mm256_set1_ps(field_x);
         __m256 f_y_vec = _mm256_set1_ps(field_y);
@@ -1460,7 +1459,7 @@ static void ps_impl_fmm_downward_pass(ps_context_t* ctx, ps_node_t* node,
 
         float field_z = t_local[3];
 
-#if defined(PS_USE_AVX2)
+#ifdef PS_USE_AVX2
         // broadcast local bg field to all 8 lanes
         __m256 f_x_vec = _mm256_set1_ps(field_x);
         __m256 f_y_vec = _mm256_set1_ps(field_y);
@@ -1603,7 +1602,7 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
 
             uint32_t j = 0;
 
-#if defined(PS_USE_AVX2)
+#ifdef PS_USE_AVX2
 
             // broadcast target coords and soft param
             __m256 t_x_vec = _mm256_set1_ps(t_x);
@@ -1757,7 +1756,7 @@ static void ps_impl_fmm_p2p_pass(ps_context_t* ctx, ps_node_t* target,
 
             uint32_t j = 0;
 
-#if defined(PS_USE_AVX2)
+#ifdef PS_USE_AVX2
 
             // broadcast target coords and soft param
             __m256 t_x_vec = _mm256_set1_ps(t_x);
@@ -2436,7 +2435,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 #ifdef PS_2D
 
-#if defined(PS_USE_AVX2)
+#ifdef PS_USE_AVX2
 
     __m256 v_min = _mm256_set1_ps(FLT_MAX);
     __m256 v_max = _mm256_set1_ps(-FLT_MAX);
@@ -2520,7 +2519,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 #else // PS_3D
 
-#if defined(PS_USE_AVX2)
+#ifdef PS_USE_AVX2
 
     __m256 v_min = _mm256_set1_ps(FLT_MAX);
     __m256 v_max = _mm256_set1_ps(-FLT_MAX);
@@ -2621,7 +2620,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 #ifdef PS_2D
 
-#if defined(PS_USE_AVX2)
+#ifdef PS_USE_AVX2
 
     __m256 v_min_b = _mm256_set1_ps(min_b);
     __m256 v_scale = _mm256_set1_ps(65535.0F / range);
@@ -2752,7 +2751,7 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 
 #else // PS_3D
 
-#if defined(PS_USE_AVX2)
+#ifdef PS_USE_AVX2
 
     __m256 v_min_b = _mm256_set1_ps(min_b);
     __m256 v_scale = _mm256_set1_ps(1023.0F / range);
