@@ -1,3 +1,4 @@
+// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dc136-c,cert-dc151-cpp)
 #define _POSIX_C_SOURCE 199309L
 #include <math.h>
 #include <stdio.h>
@@ -68,10 +69,14 @@ double get_baseline_time(int count) {
     memset(fy, 0, count * sizeof(float));
     memset(fz, 0, count * sizeof(float));
 
+    // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp)
     srand(7331);
     for (int i = 0; i < count; i++) {
-        px[i]   = ((float)rand() / RAND_MAX) * 100.0F;
-        py[i]   = ((float)rand() / RAND_MAX) * 100.0F;
+        // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp)
+        px[i] = ((float)rand() / RAND_MAX) * 100.0F;
+        // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp)
+        py[i] = ((float)rand() / RAND_MAX) * 100.0F;
+        // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp)
         pz[i]   = ((float)rand() / RAND_MAX) * 100.0F;
         mass[i] = 1.0F;
         id[i]   = i;
@@ -155,10 +160,14 @@ double get_test_time(int count, size_t thrd_cnt) {
     memset(fy, 0, count * sizeof(float));
     memset(fz, 0, count * sizeof(float));
 
+    // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp)
     srand(7331);
     for (int i = 0; i < count; i++) {
-        px[i]   = ((float)rand() / RAND_MAX) * 100.0F;
-        py[i]   = ((float)rand() / RAND_MAX) * 100.0F;
+        // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp)
+        px[i] = ((float)rand() / RAND_MAX) * 100.0F;
+        // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp)
+        py[i] = ((float)rand() / RAND_MAX) * 100.0F;
+        // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp)
         pz[i]   = ((float)rand() / RAND_MAX) * 100.0F;
         mass[i] = 1.0F;
         id[i]   = i;
