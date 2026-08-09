@@ -9,15 +9,8 @@
 ## Quickstart
 
 Include the header in one C file with `POLESITTER_IMPLEMENTATION` defined. \
-Define `PS_MULTITHREADING` as well when using more than one thread. \
-Define `PS_2D` when simulating in two-dimensional space.
-Use #define PS_ORDER 1-3 to pick maximum order of Taylor expansions used in solver. \
-    * (higher = worse performance, better accuracy)
-    * (default = 2)
-
 
 ```c
-#define PS_MULTITHREADING
 #define POLESITTER_IMPLEMENTATION
 #include "polesitter.h"
 ```
@@ -124,6 +117,18 @@ int main(void) {
 }
 ```
 
+### Configuration
+
+Define these before `#include "polesitter.h"` to configure the solver:
+
+| Macro               | Description                                                               |
+| ---                 | ---                                                                       |
+| `PS_2D`             | Compiles the solver for 2D (quadtree-based) instead of 3D (octree-based). |
+| `PS_ORDER <N>`      | Sets the Taylor expansion order (1=Dipole, 2=Quadrupole, 3=Octupole).     |
+| `PS_MULTITHREADING` | Enables the parallel implementation.                                      |
+| `PS_USE_AVX2`       | Explicitly enables AVX2 intrinsics for x86 CPUs.                          |
+| `PS_USE_NEON`       | Explicitly enables NEON intrinsics for ARM CPUs.                          |
+
 ## Pipeline
 
 The most common N-body tree codes rely on the Barnes-Hut algorithm, ending up with O(N log N) time complexity. 
@@ -139,7 +144,7 @@ It calculates interactions between cells and treats distant forces as a local ba
 The solver executes physics ticks in four distinct passes over the Z-ordered octree:
 
 1. **Upward pass (P2M & M2M)**
-    - **Particle-to-Multipole:** Leaf nodes calculate their initial multipole expansion (total mass and cneter of mass) from their particles.
+    - **Particle-to-Multipole:** Leaf nodes calculate their initial multipole expansion (total mass and center of mass) from their particles.
     - **Multipole-to-Multipole:** These expansions are aggregated up the tree from the leaves to the root. Every node now represents the center of mass of all its children.
 
 2. **Interaction pass (M2L)**
