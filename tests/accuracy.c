@@ -148,9 +148,9 @@ static int comp_arrs(const char* phase, size_t cnt, ps_particle_arrs_t* st,
                 phase, i, st->id[i], mt->id[i]);
             mismatches++;
         }
-        if (fabs(st->fx[i] - mt->fx[i]) > 1e-4F ||
-            fabs(st->fy[i] - mt->fy[i]) > 1e-4F ||
-            fabs(st->fz[i] - mt->fz[i]) > 1e-4F) {
+        if (fabsf(st->fx[i] - mt->fx[i]) > 1e-4F ||
+            fabsf(st->fy[i] - mt->fy[i]) > 1e-4F ||
+            fabsf(st->fz[i] - mt->fz[i]) > 1e-4F) {
             printf("[%s] Force mismatch at array index %zu (ID %u): "
                    "ST(%.2f,%.2f,%.2f) MT(%.2f,%.2f,%.2f)",
                    phase, i, st->id[i], st->fx[i], st->fy[i], st->fz[i],
@@ -203,14 +203,14 @@ static int comp_trees_rec(ps_context_t* ctx_st, ps_context_t* ctx_mt,
     float* a_local = ps_impl_get_local(ctx_st, a);
     float* b_local = ps_impl_get_local(ctx_mt, b);
     for (int i = 0; i < 4; ++i) {
-        if (fabs(a_multi[i] - b_multi[i]) > 1e-4F) {
+        if (fabsf(a_multi[i] - b_multi[i]) > 1e-4F) {
             printf(
                 "[%s] Multipole mismatch at depth %d, idx %d: ST=%f, MT=%f\n",
                 phase, depth, i, a_multi[i], b_multi[i]);
             return 0;
         }
 
-        if (fabs(a_local[i] - b_local[i]) > 1e-4F) {
+        if (fabsf(a_local[i] - b_local[i]) > 1e-4F) {
             printf(
                 "[%s] Local field mismatch at depth %d, idx %d: ST=%f, MT=%f\n",
                 phase, depth, i, a_local[i], b_local[i]);
