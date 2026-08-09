@@ -21,10 +21,14 @@ jobs:
         run: clang-format --dry-run --Werror src/polesitter.h tests/*.c
 
       - name: cmake
-        run: cmake -B build -S .
+        run: cmake -B build -S . -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: clang-tidy
-        run: clang-tidy tests/main.c -p build --warnings-as-errors=*
+        run: |
+          clang-tidy tests/main_2d.c   -p build --warnings-as-errors=*
+          clang-tidy tests/main_3d.c   -p build --warnings-as-errors=*
+          clang-tidy tests/accuracy.c  -p build --warnings-as-errors=*
+          clang-tidy tests/benchmark.c -p build --warnings-as-errors=*
 
   test:
     needs: lint
