@@ -9,7 +9,7 @@
 
 #define ARENA_SIZE   (1024ULL * 1024ULL * 32ULL)
 #define SOFTENING_SQ 0.1F
-#define THETA        2.0F
+#define THETA        3.4641F
 
 static int g_failures = 0;
 
@@ -91,8 +91,9 @@ static void run_dipole_sign_test(void) {
     source->half_width = 1.0F;
 
     /* One unit mass displaced +1 from the source-cell center. */
-    source->multipole[0] = 1.0F;
-    source->multipole[1] = 1.0F;
+    float* s_multi = ps_impl_get_multipole(ctx, source);
+    s_multi[0]     = 1.0F;
+    s_multi[1]     = 1.0F;
 
     ps_impl_fmm_interaction_pass(ctx, target, source, THETA);
 
@@ -147,9 +148,9 @@ static int comp_arrs(const char* phase, size_t cnt, ps_particle_arrs_t* st,
                 phase, i, st->id[i], mt->id[i]);
             mismatches++;
         }
-        if (fabs(st->fx[i] - mt->fx[i]) > 1e-4F ||
-            fabs(st->fy[i] - mt->fy[i]) > 1e-4F ||
-            fabs(st->fz[i] - mt->fz[i]) > 1e-4F) {
+        if (fabsf(st->fx[i] - mt->fx[i]) > 1e-4F ||
+            fabsf(st->fy[i] - mt->fy[i]) > 1e-4F ||
+            fabsf(st->fz[i] - mt->fz[i]) > 1e-4F) {
             printf("[%s] Force mismatch at array index %zu (ID %u): "
                    "ST(%.2f,%.2f,%.2f) MT(%.2f,%.2f,%.2f)",
                    phase, i, st->id[i], st->fx[i], st->fy[i], st->fz[i],
@@ -197,17 +198,19 @@ static int comp_trees_rec(ps_context_t* ctx_st, ps_context_t* ctx_mt,
         }
     }
 
+    float* a_multi = ps_impl_get_multipole(ctx_st, a);
+    float* b_multi = ps_impl_get_multipole(ctx_mt, b);
+    float* a_local = ps_impl_get_local(ctx_st, a);
+    float* b_local = ps_impl_get_local(ctx_mt, b);
     for (int i = 0; i < 4; ++i) {
-        if (fabs(a->multipole[i] - b->multipole[i]) > 1e-4F) {
+        if (fabsf(a_multi[i] - b_multi[i]) > 1e-4F) {
             printf(
                 "[%s] Multipole mismatch at depth %d, idx %d: ST=%f, MT=%f\n",
-                phase, depth, i, a->multipole[i], b->multipole[i]);
+                phase, depth, i, a_multi[i], b_multi[i]);
             return 0;
         }
 
-        float* a_local = ps_impl_get_local(ctx_st, a);
-        float* b_local = ps_impl_get_local(ctx_mt, b);
-        if (fabs(a_local[i] - b_local[i]) > 1e-4F) {
+        if (fabsf(a_local[i] - b_local[i]) > 1e-4F) {
             printf(
                 "[%s] Local field mismatch at depth %d, idx %d: ST=%f, MT=%f\n",
                 phase, depth, i, a_local[i], b_local[i]);
@@ -345,75 +348,25 @@ static void run_st_vs_mt_test(void) {
         return;
     }
 
+    // interaction pass (m2l)
     ps_impl_fmm_interaction_pass(ctx_st, ctx_st->root, ctx_st->root, THETA);
-    for (int i = 0; i < 8; ++i) {
-        ps_node_t* root_child =
-            ps_impl_get_node(ctx_mt, ctx_mt->root->data.children_offs[i]);
-        if (!root_child) {
-            continue;
-        }
-
-        ps_job_t job;
-        job.type            = PS_JOB_INTERACTION;
-        job.data.fmm.target = root_child;
-        job.data.fmm.src    = ctx_mt->root;
-        ps_impl_pool_submit(ctx_mt, job);
-    }
+    ps_impl_dispatch_fmm(ctx_mt, PS_JOB_INTERACTION, ctx_mt->root, ctx_mt->root,
+                         &arrs_mt, 0, 2);
     ps_impl_pool_wait(ctx_mt);
-    if (!comp_trees_rec(ctx_st, ctx_mt, ctx_st->root, ctx_mt->root, 0,
-                        "INTERACTION PASS")) {
-        return;
-    }
 
     // downward pass (l2l -> l2p)
     ps_impl_fmm_downward_pass(ctx_st, ctx_st->root, &arrs_st);
-    for (int i = 0; i < 8; ++i) {
-        ps_node_t* root_child =
-            ps_impl_get_node(ctx_mt, ctx_mt->root->data.children_offs[i]);
-        if (!root_child) {
-            continue;
-        }
-
-        // shift the roots bg field into the child sequentially
-        float* root_child_local = ps_impl_get_local(ctx_mt, root_child);
-        float* root_local       = ps_impl_get_local(ctx_mt, ctx_mt->root);
-        root_child_local[1] += root_local[1];
-        root_child_local[2] += root_local[2];
-        root_child_local[3] += root_local[3];
-
-        ps_job_t job;
-        job.type          = PS_JOB_DOWNWARD;
-        job.data.fmm.src  = root_child;
-        job.data.fmm.arrs = &arrs_mt;
-        ps_impl_pool_submit(ctx_mt, job);
-    }
+    ps_impl_dispatch_downward(ctx_mt, ctx_mt->root, &arrs_mt, 0, 2);
     ps_impl_pool_wait(ctx_mt);
     if (!comp_arrs("DOWNWARD PASS ARRAYS", cnt, &arrs_st, &arrs_mt, mo_st,
                    mo_mt)) {
         return;
     }
-    if (!comp_trees_rec(ctx_st, ctx_mt, ctx_st->root, ctx_mt->root, 0,
-                        "DOWNWARD PASS TREE")) {
-        return;
-    }
 
     // evaluation pass (p2p)
-    ps_impl_fmm_p2p_pass(ctx_st, ctx_st->root, ctx_st->root, &arrs_st,
-                         ctx_st->theta);
-    for (int i = 0; i < 8; ++i) {
-        ps_node_t* root_child =
-            ps_impl_get_node(ctx_mt, ctx_mt->root->data.children_offs[i]);
-        if (!root_child) {
-            continue;
-        }
-
-        ps_job_t job;
-        job.type            = PS_JOB_P2P;
-        job.data.fmm.target = root_child;
-        job.data.fmm.src    = ctx_mt->root;
-        job.data.fmm.arrs   = &arrs_mt;
-        ps_impl_pool_submit(ctx_mt, job);
-    }
+    ps_impl_fmm_p2p_pass(ctx_st, ctx_st->root, ctx_st->root, &arrs_st, THETA);
+    ps_impl_dispatch_fmm(ctx_mt, PS_JOB_P2P, ctx_mt->root, ctx_mt->root,
+                         &arrs_mt, 0, 2);
     ps_impl_pool_wait(ctx_mt);
     if (!comp_arrs("P2P PASS", cnt, &arrs_st, &arrs_mt, mo_st, mo_mt)) {
         return;
