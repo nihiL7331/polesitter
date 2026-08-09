@@ -353,8 +353,29 @@ ps_result_t ps_prepare_particles(ps_particle_arrs_t* arrs,
 // shuts down bg threads safely before freeing memory
 ps_result_t ps_destroy(ps_context_t* ctx);
 
+ps_result_t ps_query_radius(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
+                            float cx, float cy,
+#ifndef PS_2D
+                            float cz,
+#endif // PS_3D
+                            float radius, uint32_t* out_ids,
+                            uint32_t max_results, uint32_t* out_count);
+
+ps_result_t ps_query_aabb(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
+                          float min_x, float min_y,
+#ifndef PS_2D
+                          float min_z,
+#endif // PS_3D
+                          float max_x, float max_y,
+#ifndef PS_2D
+                          float max_z,
+#endif // PS_3D
+                          uint32_t* out_ids, uint32_t max_results,
+                          uint32_t* out_count);
+
 #endif // POLESITTER_H
 
+#define POLESITTER_IMPLEMENTATION
 #ifdef POLESITTER_IMPLEMENTATION
 
 // =====================================================================
@@ -1086,6 +1107,11 @@ static inline size_t ps_impl_find_split(const uint32_t* codes, size_t start,
     }
 
     return left;
+}
+
+static inline float ps_impl_clampf(float val, float min_val, float max_val) {
+    const float t = val < min_val ? min_val : val;
+    return t > max_val ? max_val : t;
 }
 
 // walk the morton code and build the tree branches
@@ -4379,6 +4405,166 @@ ps_result_t ps_destroy(ps_context_t* ctx) {
     }
 
 #endif // PS_MULTITHREADING
+
+    return PS_OK;
+}
+
+ps_result_t ps_query_radius(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
+                            float cx, float cy,
+#ifndef PS_2D
+                            float cz,
+#endif // PS_3D
+                            float radius, uint32_t* out_ids,
+                            uint32_t max_results, uint32_t* out_count) {
+    if (!ctx || !arrs || !out_ids || !out_count) {
+        return PS_EINVAL;
+    }
+
+    *out_count      = 0;
+    ps_node_t* root = ps_impl_get_node(ctx, 0);
+    if (!root) {
+        return PS_OK;
+    }
+
+    float r2 = radius * radius;
+
+    ps_node_t* stack[PS_MAX_DEPTH * PS_OCTANTS];
+    uint32_t   stack_ptr = 0;
+
+    stack[stack_ptr++] = root;
+
+    while (stack_ptr > 0) {
+        ps_node_t* node = stack[--stack_ptr];
+        float      hw   = node->half_width;
+
+        // does the query sphere intersect this nodes AABB
+        float closest_x = ps_impl_clampf(cx, node->x - hw, node->x + hw);
+        float closest_y = ps_impl_clampf(cy, node->y - hw, node->y + hw);
+
+        float dx    = closest_x - cx;
+        float dy    = closest_y - cy;
+        float dist2 = (dx * dx) + (dy * dy);
+
+#ifndef PS_2D
+        float closest_z = ps_impl_clampf(cz, node->z - hw, node->z + hw);
+        float dz        = closest_z - cz;
+        dist2 += dz * dz;
+#endif
+
+        // if closest point on the nodes box is outside the radius discard
+        if (dist2 > r2) {
+            continue;
+        }
+
+        if (node->data.leaf.is_leaf & 1) {
+            for (uint32_t i = 0; i < node->data.leaf.particle_cnt; ++i) {
+                uint32_t idx = node->data.leaf.first_particle_idx + i;
+
+                float pdx     = arrs->x[idx] - cx;
+                float pdy     = arrs->y[idx] - cy;
+                float p_dist2 = (pdx * pdx) + (pdy * pdy);
+
+#ifndef PS_2D
+                float pdz = arrs->z[idx] - cz;
+                p_dist2 += (pdz * pdz);
+#endif
+
+                if (p_dist2 <= r2) {
+                    if (*out_count < max_results) {
+                        out_ids[*out_count] = arrs->id[idx];
+                        (*out_count)++;
+                    } else {
+                        return PS_OK;
+                    }
+                }
+            }
+        } else {
+            for (int i = 0; i < PS_OCTANTS; ++i) {
+                ps_node_t* child =
+                    ps_impl_get_node(ctx, node->data.children_offs[i]);
+                if (child) {
+                    stack[stack_ptr++] = child;
+                }
+            }
+        }
+    }
+
+    return PS_OK;
+}
+
+ps_result_t ps_query_aabb(ps_context_t* ctx, const ps_particle_arrs_t* arrs,
+                          float min_x, float min_y,
+#ifndef PS_2D
+                          float min_z,
+#endif // PS_3D
+                          float max_x, float max_y,
+#ifndef PS_2D
+                          float max_z,
+#endif // PS_3D
+                          uint32_t* out_ids, uint32_t max_results,
+                          uint32_t* out_count) {
+    if (!ctx || !arrs || !out_ids || !out_count) {
+        return PS_EINVAL;
+    }
+
+    *out_count      = 0;
+    ps_node_t* root = ps_impl_get_node(ctx, 0);
+    if (!root) {
+        return PS_OK;
+    }
+
+    ps_node_t* stack[PS_MAX_DEPTH * PS_OCTANTS];
+    uint32_t   stack_ptr = 0;
+
+    stack[stack_ptr++] = root;
+
+    while (stack_ptr > 0) {
+        ps_node_t* node = stack[--stack_ptr];
+        float      hw   = node->half_width;
+
+        if (node->x + hw < min_x || node->x - hw > max_x ||
+            node->y + hw < min_y || node->y - hw > max_y) {
+            continue;
+        }
+
+#ifndef PS_2D
+        if (node->z + hw < min_z || node->z - hw > max_z) {
+            continue;
+        }
+#endif
+
+        if (node->data.leaf.is_leaf & 1) {
+            for (uint32_t i = 0; i < node->data.leaf.particle_cnt; ++i) {
+                uint32_t idx = node->data.leaf.first_particle_idx + i;
+
+                float px = arrs->x[idx];
+                float py = arrs->y[idx];
+
+                if (px >= min_x && px <= max_x && py >= min_y && py <= max_y) {
+#ifndef PS_2D
+                    float pz = arrs->z[idx];
+                    if (pz < min_z || pz > max_z) {
+                        continue;
+                    }
+#endif
+                    if (*out_count < max_results) {
+                        out_ids[*out_count] = arrs->id[idx];
+                        (*out_count)++;
+                    } else {
+                        return PS_OK;
+                    }
+                }
+            }
+        } else {
+            for (int i = 0; i < PS_OCTANTS; ++i) {
+                ps_node_t* child =
+                    ps_impl_get_node(ctx, node->data.children_offs[i]);
+                if (child) {
+                    stack[stack_ptr++] = child;
+                }
+            }
+        }
+    }
 
     return PS_OK;
 }
