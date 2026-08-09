@@ -164,7 +164,7 @@ The solver executes physics ticks in four distinct passes over the Z-ordered oct
 
 ## License
 
-MIT License.
+Zlib license.
 
 ## Sources
 
